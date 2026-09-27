@@ -137,6 +137,21 @@ dist
 !.yarn/sdks
 !.yarn/versions
 
+# Vercel
+.vercel/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+
 # Vite files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
