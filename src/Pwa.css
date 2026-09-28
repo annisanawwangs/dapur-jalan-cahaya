@@ -1,0 +1,193 @@
+/* ========================================
+   PWA INSTALL CARD
+   ======================================== */
+
+.pwa-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+
+  background: #ffffff;
+
+  border:
+    1px solid
+    rgba(
+      15,
+      118,
+      110,
+      0.18
+    );
+
+  border-radius: 18px;
+
+  padding: 18px;
+
+  margin-bottom: 18px;
+
+  box-shadow:
+    0 8px 24px
+    rgba(
+      15,
+      23,
+      42,
+      0.06
+    );
+}
+
+
+/* ========================================
+   ICON
+   ======================================== */
+
+.pwa-icon {
+  width: 54px;
+  height: 54px;
+
+  flex:
+    0 0 54px;
+
+  border-radius: 16px;
+
+  display: grid;
+
+  place-items: center;
+
+  background:
+    #0B8779;
+
+  color:
+    #ffffff;
+
+  font-weight: 800;
+
+  letter-spacing:
+    0.4px;
+}
+
+
+/* ========================================
+   TEXT
+   ======================================== */
+
+.pwa-copy {
+  flex: 1;
+
+  min-width: 0;
+}
+
+
+.pwa-copy h3 {
+  margin:
+    0 0 4px;
+
+  font-size:
+    16px;
+}
+
+
+.pwa-copy p {
+  margin: 0;
+
+  color:
+    #64748b;
+
+  line-height:
+    1.45;
+
+  font-size:
+    13px;
+}
+
+
+/* ========================================
+   BUTTON
+   ======================================== */
+
+.pwa-install-btn {
+  white-space:
+    nowrap;
+}
+
+
+/* ========================================
+   INSTALLED STATE
+   ======================================== */
+
+.pwa-card-installed {
+  border-color:
+    rgba(
+      21,
+      154,
+      145,
+      0.24
+    );
+}
+
+
+.pwa-status {
+  padding:
+    7px 11px;
+
+  border-radius:
+    999px;
+
+  background:
+    #e8f7f4;
+
+  color:
+    #0B8779;
+
+  font-weight:
+    700;
+
+  font-size:
+    12px;
+}
+
+
+/* ========================================
+   MOBILE
+   ======================================== */
+
+@media (
+  max-width: 700px
+) {
+
+  .pwa-card {
+    align-items:
+      flex-start;
+
+    flex-wrap:
+      wrap;
+  }
+
+
+  .pwa-copy {
+    flex:
+      1 1
+      calc(
+        100% - 70px
+      );
+  }
+
+
+  .pwa-install-btn {
+    width:
+      100%;
+  }
+
+}
+
+
+/* ========================================
+   PRINT
+   ======================================== */
+
+@media print {
+
+  .pwa-card {
+    display:
+      none !important;
+  }
+
+}
