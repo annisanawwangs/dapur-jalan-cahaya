@@ -108,7 +108,7 @@ export default function Requests({has}){
       <PrintLine label="Atas Nama" value={detail?.account_name}/>
       <PrintLine label="Bank" value={detail?.bank_name}/>
      </div>
-     <div className="sp-statement"><b>Pernyataan :</b><ol><li>Dengan pengajuan ini, pemohon menyatakan bahwa data dan pengajuan dana telah diisi sesuai ketentuan/prosedur/syariat yang berlaku.</li><li>Pimpinan unit kerja telah memeriksa kebenaran pengisian dokumen dan pengajuan dana.</li></ol></div>
+     <div className="sp-statement"><b>Pernyataan :</b><ol><li>Dengan menandatangani dokumen ini, maka SPA/Santri yang mengajukan menyatakan bahwa pengisian dokumen dan pengajuan dana, sesuai dengan ketentuan/prosedur/syarat yang berlaku.</li><li>Dengan menandatangani dokumen ini, maka Pimpinan Unit Kerja telah memeriksa dengan benar pengisian dokumen serta pengajuan dana telah sesuai dengan ketentuan/prosedur yang berlaku.</li></ol></div>
      <div className="sp-validation"><span>Validasi</span><div className="sp-sign-row"><div><b>Accounting</b><em></em><i></i></div><div><b>SPA/Accounting</b><em></em><i></i></div><div><b>Manager Finance</b><em></em><i></i></div></div></div>
     </section>
 
