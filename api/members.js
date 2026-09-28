@@ -36,16 +36,47 @@ export default async function handler(req,res){
       const email=String(req.body?.email||'').trim().toLowerCase()
       const full_name=String(req.body?.full_name||'').trim()
       const role_id=String(req.body?.role_id||'')
-      if(!email||!email.includes('@')||!full_name||!role_id) return send(res,400,{error:'Nama, email, dan role wajib diisi.'})
+      const password=String(req.body?.password||'')
+
+      if(!email||!email.includes('@')||!full_name||!role_id||!password){
+        return send(res,400,{error:'Nama, email, password, dan role wajib diisi.'})
+      }
+      if(password.length<8){
+        return send(res,400,{error:'Password minimal 8 karakter.'})
+      }
+
       const {data:role}=await admin.from('roles').select('id').eq('id',role_id).maybeSingle()
       if(!role) return send(res,400,{error:'Role tidak ditemukan.'})
-      const redirectTo=(process.env.APP_URL||'').replace(/\/$/,'') || undefined
-      const {data,error}=await admin.auth.admin.inviteUserByEmail(email,{data:{full_name},...(redirectTo?{redirectTo}:{})})
-      if(error) return send(res,400,{error:error.message.includes('already')?'Email tersebut sudah terdaftar. Edit role member yang sudah ada atau gunakan email lain.':error.message})
+
+      const {data,error}=await admin.auth.admin.createUser({
+        email,
+        password,
+        email_confirm:true,
+        user_metadata:{full_name}
+      })
+
+      if(error){
+        const msg=String(error.message||'')
+        return send(res,400,{error:/already|registered|exists/i.test(msg)?'Email tersebut sudah terdaftar. Edit member yang sudah ada atau gunakan email lain.':msg})
+      }
+
       const user=data?.user
       if(!user) return send(res,500,{error:'User tidak berhasil dibuat.'})
-      const {error:profileError}=await admin.from('members').upsert({id:user.id,email,full_name,role_id,active:true},{onConflict:'id'})
-      if(profileError) throw profileError
+
+      const {error:profileError}=await admin.from('members').upsert({
+        id:user.id,
+        email,
+        full_name,
+        role_id,
+        active:true
+      },{onConflict:'id'})
+
+      if(profileError){
+        // Hindari akun Auth yatim bila pembuatan profil gagal.
+        await admin.auth.admin.deleteUser(user.id).catch(()=>{})
+        throw profileError
+      }
+
       return send(res,201,{ok:true,id:user.id})
     }
 
@@ -55,7 +86,11 @@ export default async function handler(req,res){
       const full_name=String(req.body?.full_name||'').trim()
       const role_id=String(req.body?.role_id||'')
       const active=req.body?.active!==false
+      const password=String(req.body?.password||'')
+
       if(!id||!email||!email.includes('@')||!full_name||!role_id) return send(res,400,{error:'Data member belum lengkap.'})
+      if(password && password.length<8) return send(res,400,{error:'Password baru minimal 8 karakter.'})
+
       const [{data:target},{data:newRole},{data:adminRole}]=await Promise.all([
         admin.from('members').select('id,role_id,active').eq('id',id).maybeSingle(),
         admin.from('roles').select('id,slug').eq('id',role_id).maybeSingle(),
@@ -67,8 +102,12 @@ export default async function handler(req,res){
         const {count}=await admin.from('members').select('*',{count:'exact',head:true}).eq('role_id',adminRole.id).eq('active',true)
         if((count||0)<=1) return send(res,400,{error:'Minimal harus ada satu Admin aktif.'})
       }
-      const {error:authError}=await admin.auth.admin.updateUserById(id,{email,user_metadata:{full_name}})
+
+      const authChanges={email,user_metadata:{full_name}}
+      if(password) authChanges.password=password
+      const {error:authError}=await admin.auth.admin.updateUserById(id,authChanges)
       if(authError) return send(res,400,{error:authError.message})
+
       const {error}=await admin.from('members').update({email,full_name,role_id,active}).eq('id',id)
       if(error) throw error
       return send(res,200,{ok:true})
