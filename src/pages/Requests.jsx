@@ -84,14 +84,17 @@ export default function Requests({has}){
 
  <Modal open={detailOpen} title={`Slip ${detail?.request_no||''}`} onClose={()=>setDetailOpen(false)}>
   <div className="sp-slip" id="print-slip">
-   <div className="sp-topbar"><div className="sp-brand"><div className="sp-logo">JC</div><div><strong>DAPUR</strong><span>JALAN CAHAYA</span></div></div><div className="sp-title">SLIP PENGAJUAN</div></div>
+   <div className="sp-topbar"><div className="sp-brand"><img className="sp-brand-logo" src="/logo-mjc-white-transparent.png" alt="Masjid Jalan Cahaya"/></div><div className="sp-title">SLIP PENGAJUAN</div></div>
+   <div className="sp-top-meta">
+    <div className="sp-fields compact sp-top-date">
+     <PrintLine label="Tanggal" value={dateID(detail?.request_date)}/>
+     <PrintLine label="Jam" value={timeText(detail?.request_time)}/>
+    </div>
+    <div className="sp-adminbox"><b>Diisi Oleh Admin</b><div className="sp-admin-number"><span>Nomor SP</span><strong>:</strong><i></i><em>/SP/MJC/</em><i></i><em>/{detail?.request_date?new Date(detail.request_date+'T00:00:00').getFullYear():new Date().getFullYear()}</em></div></div>
+   </div>
+   <div className="sp-transaction-full"><span>Jenis Transaksi</span><div>{transactionTypes.map(([v,l])=><PrintCheck key={v} checked={detail?.transaction_type===v} label={l}/>)}</div></div>
    <div className="sp-body">
     <section className="sp-left">
-     <div className="sp-fields compact">
-      <PrintLine label="Tanggal" value={dateID(detail?.request_date)}/>
-      <PrintLine label="Jam" value={timeText(detail?.request_time)}/>
-     </div>
-     <div className="sp-transaction-row"><span>Jenis Transaksi</span><div>{transactionTypes.map(([v,l])=><PrintCheck key={v} checked={detail?.transaction_type===v} label={l}/>)}</div></div>
      <div className="sp-fields">
       <PrintLine label="Nama SPA/Santri" value={detail?.requester}/>
       <PrintLine label="Divisi/Departemen" value={detail?.department||detail?.program}/>
@@ -110,7 +113,6 @@ export default function Requests({has}){
     </section>
 
     <section className="sp-right">
-     <div className="sp-adminbox"><b>Diisi Oleh Admin</b><div><span>Nomor SP</span><strong>{safe(detail?.request_no,'')}</strong><em>{detail?.request_date?new Date(detail.request_date+'T00:00:00').getFullYear():new Date().getFullYear()}</em></div></div>
      <div className="sp-cost-title">Informasi Pengeluaran Biaya</div>
      <div className={`sp-cost-grid ${(detail?.request_items||[]).length>6?'dense':''}`}>
       <div className="sp-cost-head"><div>Rincian</div><div>Nominal</div><div>Qty</div><div>Jumlah</div></div>
