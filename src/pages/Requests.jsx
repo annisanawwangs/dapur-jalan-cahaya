@@ -49,6 +49,12 @@ export default function Requests({has}){
  async function view(r){const {data:receipts}=await supabase.from('receipts').select('*').eq('request_id',r.id).order('created_at',{ascending:false});const signed=await Promise.all((receipts||[]).map(async x=>{const {data}=await supabase.storage.from('receipts').createSignedUrl(x.file_path,3600);return {...x,signed_url:data?.signedUrl||'#'}}));setDetail({...r,receipts:signed});setDetailOpen(true)}
  async function uploadReceipt(e){const file=e.target.files?.[0];if(!file||!detail)return;const path=`${detail.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`;const {error}=await supabase.storage.from('receipts').upload(path,file);if(error){setToast(error.message);return}const {error:e2}=await supabase.from('receipts').insert({request_id:detail.id,file_name:file.name,file_path:path});if(e2){setToast(e2.message);return}setToast('Nota diunggah.');view(detail)}
  const change=k=>e=>setForm({...form,[k]:e.target.value})
+ function printSlip(){
+   document.body.classList.add('sp-print-mode')
+   const cleanup=()=>{document.body.classList.remove('sp-print-mode');window.removeEventListener('afterprint',cleanup)}
+   window.addEventListener('afterprint',cleanup)
+   requestAnimationFrame(()=>setTimeout(()=>window.print(),60))
+ }
  return <>
  <Toast message={toast}/>
  <div className="toolbar"><div className="search"><Search size={17}/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Cari no, pemohon, program..."/></div>{has('requests.create')&&<button className="primary" onClick={add}><Plus size={17}/>Pengajuan</button>}</div>
@@ -106,7 +112,11 @@ export default function Requests({has}){
     <section className="sp-right">
      <div className="sp-adminbox"><b>Diisi Oleh Admin</b><div><span>Nomor SP</span><strong>{safe(detail?.request_no,'')}</strong><em>{detail?.request_date?new Date(detail.request_date+'T00:00:00').getFullYear():new Date().getFullYear()}</em></div></div>
      <div className="sp-cost-title">Informasi Pengeluaran Biaya</div>
-     <table className="sp-cost-table"><thead><tr><th>Rincian</th><th>Nominal</th><th>Qty</th><th>Jumlah</th></tr></thead><tbody>{(detail?.request_items||[]).map(it=><tr key={it.id}><td>{it.item_name}</td><td>{rupiah(it.unit_price)}</td><td>{it.qty} {it.unit}</td><td>{rupiah(it.subtotal)}</td></tr>)}{!(detail?.request_items||[]).length&&<tr><td>&nbsp;</td><td></td><td></td><td></td></tr>}</tbody><tfoot><tr><td>Total Nominal</td><td colSpan="3">{rupiah(detail?.total_amount)}</td></tr></tfoot></table>
+     <div className={`sp-cost-grid ${(detail?.request_items||[]).length>6?'dense':''}`}>
+      <div className="sp-cost-head"><div>Rincian</div><div>Nominal</div><div>Qty</div><div>Jumlah</div></div>
+      <div className="sp-cost-body">{(detail?.request_items||[]).length?(detail.request_items.map(it=><div className="sp-cost-row" key={it.id}><div>{it.item_name}</div><div>{rupiah(it.unit_price)}</div><div>{it.qty}<small>{it.unit}</small></div><div>{rupiah(it.subtotal)}</div></div>)):<div className="sp-cost-row blank"><div>&nbsp;</div><div></div><div></div><div></div></div>}</div>
+      <div className="sp-cost-total"><div>Total Nominal</div><div>{rupiah(detail?.total_amount)}</div></div>
+     </div>
      <div className="sp-purpose-right"><PrintLine label="Tujuan Transaksi" value={detail?.purpose}/></div>
      <div className="sp-fields right-info">
       <PrintLine label="Nama Vendor/Toko/Marketplace" value={detail?.vendor_name}/>
@@ -118,7 +128,7 @@ export default function Requests({has}){
     </section>
    </div>
   </div>
-  <div className="detail-actions"><button onClick={()=>window.print()}><Printer size={16}/>Cetak slip A4</button>{has('requests.approve')&&detail?.status==='pending'&&<><button className="success-btn" onClick={()=>status(detail.id,'approved')}><CheckCircle2 size={16}/>Setujui</button><button className="danger-btn" onClick={()=>status(detail.id,'rejected')}><XCircle size={16}/>Tolak</button></>}{has('requests.approve')&&detail?.status==='approved'&&<button className="success-btn" onClick={()=>status(detail.id,'completed')}><CheckCircle2 size={16}/>Tandai selesai</button>}</div>
+  <div className="detail-actions"><button onClick={printSlip}><Printer size={16}/>Cetak slip A4</button>{has('requests.approve')&&detail?.status==='pending'&&<><button className="success-btn" onClick={()=>status(detail.id,'approved')}><CheckCircle2 size={16}/>Setujui</button><button className="danger-btn" onClick={()=>status(detail.id,'rejected')}><XCircle size={16}/>Tolak</button></>}{has('requests.approve')&&detail?.status==='approved'&&<button className="success-btn" onClick={()=>status(detail.id,'completed')}><CheckCircle2 size={16}/>Tandai selesai</button>}</div>
   <div className="receipt-box"><div className="receipt-title"><div><b>Lampiran nota</b><span>JPG, PNG atau PDF</span></div>{has('requests.create')&&<label className="upload-btn"><Upload size={16}/>Unggah nota<input type="file" accept="image/*,.pdf" onChange={uploadReceipt}/></label>}</div><div className="receipt-list">{detail?.receipts?.map(x=><a key={x.id} href={x.signed_url} target="_blank" rel="noreferrer">{x.file_name}</a>)}{!detail?.receipts?.length&&<span className="muted">Belum ada nota diunggah.</span>}</div></div>
  </Modal>
  </>
