@@ -105,3 +105,5 @@ DEPLOY_SUPABASE.sql        # salinan SQL siap paste
 .env.example               # daftar env Vercel
 vercel.json                # SPA + serverless API routing
 ```
+
+Vercel deployment configured.
