@@ -33,11 +33,14 @@ export default function Requests({has,userId}){
  const [editingImport,setEditingImport]=React.useState(null)
  const [splitPdf,setSplitPdf]=React.useState(false)
  const [importProgress,setImportProgress]=React.useState('')
+ const [readingFile,setReadingFile]=React.useState(false)
  const [importAssetError,setImportAssetError]=React.useState('')
+ const importAbort=React.useRef(null)
  const uploading=React.useRef(false)
  const operationKey=React.useRef(null)
  const saveInProgress=React.useRef(false)
  React.useEffect(()=>{load()},[])
+ React.useEffect(()=>()=>importAbort.current?.abort(),[])
  async function load(){if(!supabase)return;const [r,o]=await Promise.all([supabase.from('purchase_requests').select('*, request_items(*)').order('request_date',{ascending:false}).order('created_at',{ascending:false}),getMasterOptions(['program','unit'])]);if(r.error){setToast(r.error.message);return} setRows(r.data||[]);const g=groupOptions(o);setMasters({...fallback,...Object.fromEntries(Object.entries(g).filter(([,v])=>v.length))})}
  const normalizedQuery=q.toLowerCase()
  const matches=row=>[row.request_no,row.requester,row.program,row.department,row.purpose,row.status].join(' ').toLowerCase().includes(normalizedQuery)
@@ -69,13 +72,19 @@ export default function Requests({has,userId}){
    if(!file||uploading.current||saveInProgress.current) return
    if(file.size>50*1024*1024){setToast('Ukuran dokumen maksimal 50 MB.');return}
    uploading.current=true
+   const controller=new AbortController()
+   importAbort.current=controller
+   setReadingFile(true)
    setImportAssetError('')
    setImportProgress('Membuka dokumen…')
    try{
      const [document,digest]=await Promise.all([
-       readRequestFile(file,{split:splitPdf,progress:setImportProgress}),
+       readRequestFile(file,{split:splitPdf,progress:setImportProgress,signal:controller.signal}),
        file.arrayBuffer().then(bytes=>crypto.subtle.digest('SHA-256',bytes)),
      ])
+     if(controller.signal.aborted) throw new DOMException('Impor dibatalkan.', 'AbortError')
+     importAbort.current=null
+     setReadingFile(false)
      const hash=Array.from(new Uint8Array(digest),value=>value.toString(16).padStart(2,'0')).join('')
      const results=document.texts.map((text,index)=>({ ...parseRequest(text), index, fileName:file.name }))
        .filter(slip=>document.split||hasSlipData(slip))
@@ -111,6 +120,8 @@ export default function Requests({has,userId}){
        setImportAssetError(error.message)
      }else setToast(error.message)
    }finally{
+     importAbort.current=null
+     setReadingFile(false)
      uploading.current=false
      setImportProgress('')
    }
@@ -226,7 +237,10 @@ export default function Requests({has,userId}){
    <span>{importAssetError}</span>
    <button type="button" onClick={()=>window.location.reload()}>Muat ulang</button>
  </div>}
- {importProgress&&<div className="info-banner" role="status">{importProgress}</div>}
+ {importProgress&&<div className="info-banner">
+   <span role="status">{importProgress}</span>
+   {readingFile&&<button type="button" onClick={()=>importAbort.current?.abort()}>Batalkan impor</button>}
+ </div>}
  <div className="toolbar"><div className="search"><Search size={17}/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Cari no, pemohon, program..."/></div>{has('requests.create')&&<div className="actions">
    <button className="primary" disabled={!!importProgress} onClick={()=>openForm()}><Plus size={17}/>Pengajuan</button>
    <label><input type="checkbox" checked={splitPdf} disabled={!!importProgress}
