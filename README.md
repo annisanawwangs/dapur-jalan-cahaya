@@ -7,8 +7,8 @@ Dashboard operasional dapur berbasis **React/Vite + Supabase + Vercel**. Versi i
 1. **Ringkasan** — saldo bulan berjalan, pemasukan, pengeluaran, stok minimum, pengajuan pending, grafik arus kas.
 2. **Catatan Keuangan** — pemasukan/pengeluaran, kategori, merchant, program, metode pembayaran, edit/hapus sesuai permission, print dan CSV.
 3. **Stok Bahan** — master bahan, stok minimum, stok masuk/keluar, histori mutasi, harga beli acuan.
-4. **Pengajuan & Nota** — nomor slip otomatis, rincian barang, approval, print slip, upload nota private.
-5. **Member & Akses** — tambah member melalui email invitation, ubah role, aktif/nonaktifkan member.
+4. **Pengajuan & Nota** — nomor slip otomatis, rincian barang, approval, print slip, upload nota private, serta pencatatan pencairan ke keuangan saat pengajuan ditandai selesai.
+5. **Member & Akses** — buat akun member dengan password awal, ubah role, aktif/nonaktifkan member.
 6. **Pengaturan** — identitas dashboard, kategori/program/merchant/metode pembayaran/kategori bahan/satuan, matriks hak akses role.
 7. **Akun Saya** — ubah nama tampilan dan atur/ganti password.
 
@@ -30,7 +30,6 @@ Admin dapat mengubah permission role non-Admin dari menu **Pengaturan > Hak akse
 4. Salin seluruh isi `DEPLOY_SUPABASE.sql`, lalu **Run**.
 5. Script bersifat upgrade-friendly: tabel operasional lama dipertahankan, policy v1 diganti dengan role-based access.
 6. Cek tabel `members`: user pertama/tertua akan menjadi **Admin**. User lain yang sudah ada akan menjadi **Viewer** dan dapat diubah dari dashboard.
-7. Di **Authentication > URL Configuration**, isi **Site URL** dengan domain production Vercel dan tambahkan domain itu ke **Redirect URLs** agar undangan member kembali ke aplikasi.
 
 > Bucket `receipts` dibuat private. Hak akses file mengikuti permission Pengajuan.
 
@@ -43,11 +42,10 @@ VITE_SUPABASE_URL=https://PROJECT_REF.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_xxxxxxxxx
 SUPABASE_URL=https://PROJECT_REF.supabase.co
 SUPABASE_SECRET_KEY=sb_secret_xxxxxxxxx
-APP_URL=https://nama-project.vercel.app
 ```
 
 - `VITE_SUPABASE_PUBLISHABLE_KEY` aman untuk frontend.
-- `SUPABASE_SECRET_KEY` **server-only** dan digunakan fungsi `/api/members` untuk mengundang user. Jangan pernah beri prefix `VITE_` pada secret key.
+- `SUPABASE_SECRET_KEY` **server-only** dan digunakan fungsi `/api/members` untuk membuat dan memperbarui akun member. Jangan pernah beri prefix `VITE_` pada secret key.
 - Jika project Supabase lama belum menyediakan `sb_publishable_` / `sb_secret_`, frontend masih menerima `VITE_SUPABASE_ANON_KEY` dan server dapat memakai `SUPABASE_SERVICE_ROLE_KEY` sebagai fallback. Jangan menaruh service role di variable `VITE_*`.
 
 ## C. Deploy ke Vercel
@@ -57,18 +55,15 @@ APP_URL=https://nama-project.vercel.app
 3. Framework terdeteksi sebagai **Vite**. Build command: `npm run build`, output: `dist`.
 4. Isi environment variables pada bagian B.
 5. Deploy / Redeploy.
-6. Setelah mendapatkan domain final, pastikan `APP_URL`, Supabase **Site URL**, dan **Redirect URLs** sama/diizinkan.
 
 ## D. Cara Menambah Member
 
 1. Login sebagai Admin.
 2. Buka **Member & Akses**.
 3. Klik **Tambah member**.
-4. Isi nama, email, dan role.
-5. Sistem mengirim invitation email lewat Supabase.
-6. Member membuka link undangan dan masuk ke aplikasi.
-7. Dari **Akun Saya**, member dapat mengatur password sendiri.
-8. Admin dapat mengubah role atau menonaktifkan member kapan saja.
+4. Isi nama, email, password awal, dan role. Pilihan awal adalah Viewer.
+5. Member masuk memakai email dan password awal, lalu mengganti password dari **Akun Saya**.
+6. Admin dapat mengubah role atau menonaktifkan member kapan saja.
 
 ## E. Data yang Bisa Diedit Mandiri
 
@@ -96,7 +91,7 @@ Perubahan data master otomatis dipakai pada form Keuangan, Stok, dan Pengajuan.
 ## Struktur penting
 
 ```text
-api/members.js             # invitation & administrasi member server-side
+api/members.js             # pembuatan akun & administrasi member server-side
 src/pages/Members.jsx      # UI member
 src/pages/Settings.jsx     # data master + permission
 src/pages/Account.jsx      # profil & password
@@ -106,4 +101,4 @@ DEPLOY_SUPABASE.sql        # salinan SQL siap paste
 vercel.json                # SPA + serverless API routing
 ```
 
-Vercel deployment configured.
+Jalankan `npm ci`, `node --test`, dan `npm run build` untuk memeriksa build dan tes regresi.

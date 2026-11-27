@@ -1,23 +1,27 @@
 import React from 'react'
 import { supabase, rupiah, num } from '../lib'
+import { monthRange } from '../domain'
 import { Card, Stat } from '../components/UI'
 import { Wallet, ArrowDownCircle, ArrowUpCircle, TriangleAlert, ClipboardList } from 'lucide-react'
 
 export default function Dashboard(){
+  const [error,setError]=React.useState('')
   const [stats,setStats]=React.useState({income:0,expense:0,balance:0,low:0,pending:0})
   const [expenseCats,setExpenseCats]=React.useState([])
   const [monthly,setMonthly]=React.useState([])
   React.useEffect(()=>{load()},[])
   async function load(){
     if(!supabase)return
-    const now=new Date(); const start=new Date(now.getFullYear(), now.getMonth(),1).toISOString().slice(0,10)
+    const {from,to}=monthRange()
     const [t,m,r]=await Promise.all([
-      supabase.from('transactions').select('type,amount,category,transaction_date').gte('transaction_date',start),
+      supabase.from('transactions').select('type,amount,category,transaction_date').gte('transaction_date',from).lt('transaction_date',to),
       supabase.from('materials').select('current_stock,min_stock'),
       supabase.from('purchase_requests').select('status')
     ])
+    const failed=[t,m,r].find(result=>result.error)
+    if(failed){setError(failed.error.message);return}
     const tx=t.data||[]; const income=tx.filter(x=>x.type==='income').reduce((a,b)=>a+Number(b.amount),0); const expense=tx.filter(x=>x.type==='expense').reduce((a,b)=>a+Number(b.amount),0)
-    const cats={}; tx.filter(x=>x.type==='expense').forEach(x=>cats[x.category]=(cats[x.category]||0)+Number(x.amount))
+    const cats=Object.create(null); tx.filter(x=>x.type==='expense').forEach(x=>cats[x.category]=(cats[x.category]||0)+Number(x.amount))
     const days={}; tx.forEach(x=>{const d=Number(x.transaction_date.slice(-2)); if(!days[d])days[d]={day:d,income:0,expense:0}; days[d][x.type]+=Number(x.amount)})
     setStats({income,expense,balance:income-expense,low:(m.data||[]).filter(x=>Number(x.current_stock)<=Number(x.min_stock)).length,pending:(r.data||[]).filter(x=>x.status==='pending').length})
     setExpenseCats(Object.entries(cats).map(([name,value])=>({name,value})).sort((a,b)=>b.value-a.value).slice(0,6))
@@ -25,6 +29,7 @@ export default function Dashboard(){
   }
   const maxDay=Math.max(1,...monthly.flatMap(x=>[x.income,x.expense]))
   const maxCat=Math.max(1,...expenseCats.map(x=>x.value))
+  if(error) return <Card><p role="alert">Gagal memuat ringkasan. {error}</p><button onClick={()=>{setError('');load()}}>Coba lagi</button></Card>
   return <>
     <div className="stats-grid">
       <Stat label="Saldo bulan ini" value={rupiah(stats.balance)} icon={<Wallet size={20}/>}/>

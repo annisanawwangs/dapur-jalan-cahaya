@@ -9,22 +9,12 @@ function isStandalone() {
   )
 }
 
-export default function InstallApp() {
+export function useInstallApp() {
   const [promptEvent, setPromptEvent] =
     React.useState(null)
 
   const [installed, setInstalled] =
     React.useState(() => isStandalone())
-
-  const ua =
-    navigator.userAgent || ''
-
-  const isIOS =
-    /iPad|iPhone|iPod/.test(ua) ||
-    (
-      navigator.platform === 'MacIntel' &&
-      navigator.maxTouchPoints > 1
-    )
 
   React.useEffect(() => {
     const beforeInstall = (event) => {
@@ -83,17 +73,29 @@ export default function InstallApp() {
   async function install() {
     if (!promptEvent) return
 
-    await promptEvent.prompt()
-
-    const choice =
-      await promptEvent.userChoice
-
-    if (
-      choice?.outcome === 'accepted'
-    ) {
-      setPromptEvent(null)
+    setPromptEvent(null)
+    try {
+      await promptEvent.prompt()
+      const choice = await promptEvent.userChoice
+      if (choice?.outcome === 'accepted') setInstalled(true)
+    } catch {
+      // The browser can revoke a queued prompt before it is used.
     }
   }
+
+  return { installed, promptEvent, install }
+}
+
+export default function InstallApp({ installed, promptEvent, install }) {
+  const ua =
+    navigator.userAgent || ''
+
+  const isIOS =
+    /iPad|iPhone|iPod/.test(ua) ||
+    (
+      navigator.platform === 'MacIntel' &&
+      navigator.maxTouchPoints > 1
+    )
 
   if (installed) {
     return (

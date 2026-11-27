@@ -14,11 +14,13 @@ async function requireManager(admin,token){
   if(!token) throw Object.assign(new Error('Sesi tidak ditemukan.'),{status:401})
   const {data:{user},error}=await admin.auth.getUser(token)
   if(error||!user) throw Object.assign(new Error('Sesi tidak valid.'),{status:401})
-  const {data:member}=await admin.from('members').select('id,active,role_id').eq('id',user.id).maybeSingle()
+  const {data:member,error:memberError}=await admin.from('members').select('id,active,role_id,roles(slug)').eq('id',user.id).maybeSingle()
+  if(memberError) throw memberError
   if(!member?.active) throw Object.assign(new Error('Akun tidak aktif.'),{status:403})
-  const {data:permission}=await admin.from('role_permissions').select('allowed').eq('role_id',member.role_id).eq('permission','members.manage').eq('allowed',true).maybeSingle()
+  const {data:permission,error:permissionError}=await admin.from('role_permissions').select('allowed').eq('role_id',member.role_id).eq('permission','members.manage').eq('allowed',true).maybeSingle()
+  if(permissionError) throw permissionError
   if(!permission) throw Object.assign(new Error('Anda tidak memiliki akses mengelola member.'),{status:403})
-  return user
+  return member
 }
 
 export default async function handler(req,res){
@@ -45,8 +47,10 @@ export default async function handler(req,res){
         return send(res,400,{error:'Password minimal 8 karakter.'})
       }
 
-      const {data:role}=await admin.from('roles').select('id').eq('id',role_id).maybeSingle()
+      const {data:role,error:roleError}=await admin.from('roles').select('id,slug').eq('id',role_id).maybeSingle()
+      if(roleError) throw roleError
       if(!role) return send(res,400,{error:'Role tidak ditemukan.'})
+      if(role.slug==='admin' && actor.roles?.slug!=='admin') return send(res,403,{error:'Hanya Admin yang dapat membuat akun Admin.'})
 
       const {data,error}=await admin.auth.admin.createUser({
         email,
@@ -81,35 +85,58 @@ export default async function handler(req,res){
     }
 
     if(req.method==='PATCH'){
-      const id=String(req.body?.id||'')
-      const email=String(req.body?.email||'').trim().toLowerCase()
-      const full_name=String(req.body?.full_name||'').trim()
-      const role_id=String(req.body?.role_id||'')
-      const active=req.body?.active!==false
-      const password=String(req.body?.password||'')
+      const body=req.body
+      if(!body || typeof body!=='object' || Array.isArray(body)) return send(res,400,{error:'Data member tidak valid.'})
+      const id=String(body.id||'')
+      const statusOnly=Object.keys(body).every(key=>key==='id'||key==='active')
+      const email=String(body.email||'').trim().toLowerCase()
+      const full_name=String(body.full_name||'').trim()
+      const role_id=String(body.role_id||'')
+      const password=String(body.password||'')
 
-      if(!id||!email||!email.includes('@')||!full_name||!role_id) return send(res,400,{error:'Data member belum lengkap.'})
+      if(!id || (statusOnly && typeof body.active!=='boolean') ||
+        (!statusOnly && (!email.includes('@')||!full_name||!role_id)) ||
+        ('active' in body && typeof body.active!=='boolean')){
+        return send(res,400,{error:'Data member belum lengkap atau status tidak valid.'})
+      }
       if(password && password.length<8) return send(res,400,{error:'Password baru minimal 8 karakter.'})
 
-      const [{data:target},{data:newRole},{data:adminRole}]=await Promise.all([
-        admin.from('members').select('id,role_id,active').eq('id',id).maybeSingle(),
-        admin.from('roles').select('id,slug').eq('id',role_id).maybeSingle(),
-        admin.from('roles').select('id').eq('slug','admin').maybeSingle()
-      ])
-      if(!target||!newRole) return send(res,404,{error:'Member atau role tidak ditemukan.'})
+      const {data:target,error:targetError}=await admin.from('members').select('id,email,full_name,role_id,active,roles(slug)').eq('id',id).maybeSingle()
+      if(targetError) throw targetError
+      if(!target) return send(res,404,{error:'Member tidak ditemukan.'})
+      const active=body.active??target.active
+      const targetIsAdmin=target.roles?.slug==='admin'
+      let nextRole=target.roles
+      if(!statusOnly && role_id!==target.role_id){
+        const {data,error}=await admin.from('roles').select('id,slug').eq('id',role_id).maybeSingle()
+        if(error) throw error
+        if(!data) return send(res,404,{error:'Role tidak ditemukan.'})
+        nextRole=data
+      }
+      if((targetIsAdmin||nextRole?.slug==='admin') && actor.roles?.slug!=='admin'){
+        return send(res,403,{error:'Hanya Admin yang dapat mengelola akun Admin.'})
+      }
       if(id===actor.id && !active) return send(res,400,{error:'Anda tidak dapat menonaktifkan akun sendiri.'})
-      if(adminRole && target.role_id===adminRole.id && (!active||role_id!==adminRole.id)){
-        const {count}=await admin.from('members').select('*',{count:'exact',head:true}).eq('role_id',adminRole.id).eq('active',true)
+      if(targetIsAdmin && target.active && (!active||nextRole?.slug!=='admin')){
+        const {count,error}=await admin.from('members').select('*',{count:'exact',head:true}).eq('role_id',target.role_id).eq('active',true)
+        if(error) throw error
         if((count||0)<=1) return send(res,400,{error:'Minimal harus ada satu Admin aktif.'})
       }
 
-      const authChanges={email,user_metadata:{full_name}}
+      const authChanges={}
+      if(!statusOnly && email!==target.email) authChanges.email=email
+      if(!statusOnly && full_name!==target.full_name) authChanges.user_metadata={full_name}
       if(password) authChanges.password=password
-      const {error:authError}=await admin.auth.admin.updateUserById(id,authChanges)
-      if(authError) return send(res,400,{error:authError.message})
+      if(Object.keys(authChanges).length){
+        const {error:authError}=await admin.auth.admin.updateUserById(id,authChanges)
+        if(authError) return send(res,400,{error:authError.message})
+      }
 
-      const {error}=await admin.from('members').update({email,full_name,role_id,active}).eq('id',id)
+      const changes=statusOnly?{}:{email,full_name,role_id}
+      if('active' in body) changes.active=active
+      const {data:updated,error}=await admin.from('members').update(changes).eq('id',id).select('id').maybeSingle()
       if(error) throw error
+      if(!updated) return send(res,404,{error:'Member tidak ditemukan.'})
       return send(res,200,{ok:true})
     }
 

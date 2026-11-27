@@ -6,7 +6,7 @@ const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VIT
 export const supabase = url && key ? createClient(url, key) : null
 
 export const rupiah = (value = 0) => new Intl.NumberFormat('id-ID', {
-  style: 'currency', currency: 'IDR', maximumFractionDigits: 0,
+  style: 'currency', currency: 'IDR', minimumFractionDigits: 0, maximumFractionDigits: 2,
 }).format(Number(value || 0))
 
 export const num = (value = 0) => new Intl.NumberFormat('id-ID').format(Number(value || 0))

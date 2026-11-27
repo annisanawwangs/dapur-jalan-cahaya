@@ -7,7 +7,7 @@ const groups={
   expense_category:'Kategori Pengeluaran',income_category:'Kategori Pemasukan',program:'Program',merchant:'Merchant / Pemasok',payment_method:'Metode Pembayaran',material_category:'Kategori Bahan',unit:'Satuan'
 }
 const permissionLabels={
-  'dashboard.view':'Lihat ringkasan','finance.view':'Lihat keuangan','finance.create':'Tambah transaksi','finance.edit':'Edit transaksi','finance.delete':'Hapus transaksi','stock.view':'Lihat stok','stock.manage':'Kelola stok & mutasi','stock.delete':'Hapus bahan','requests.view':'Lihat pengajuan','requests.create':'Buat pengajuan / unggah nota','requests.approve':'Setujui / tolak pengajuan','requests.delete':'Hapus pengajuan','members.manage':'Kelola member','settings.manage':'Kelola pengaturan'
+  'dashboard.view':'Lihat ringkasan','finance.view':'Lihat keuangan','finance.create':'Tambah transaksi','finance.edit':'Edit transaksi','finance.delete':'Hapus transaksi','stock.view':'Lihat stok','stock.manage':'Kelola stok & mutasi','stock.delete':'Hapus bahan','requests.view':'Lihat pengajuan','requests.create':'Buat pengajuan / unggah nota','requests.edit':'Edit pengajuan sendiri yang menunggu','requests.approve':'Setujui / tolak pengajuan','requests.delete':'Hapus pengajuan','members.manage':'Kelola member','settings.manage':'Kelola pengaturan'
 }
 
 export default function Settings({onChanged}){
