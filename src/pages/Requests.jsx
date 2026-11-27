@@ -6,7 +6,7 @@ import { ImportAssetsError, readRequestFile } from '../requestImport'
 import { Card, Empty, Modal, Toast } from '../components/UI'
 
 import { localDate, localTime, requestItems, requestTotal } from '../domain'
-import { canAutoImport, getImportKey, hasSlipData, parseRequest } from '../requestParse'
+import { canAutoImport, getImportKey, hasSlipData } from '../requestParse'
 const blank=()=>({
   request_date:localDate(),request_time:localTime(),requester:'',program:'',purpose:'',status:'pending',notes:'',
   transaction_type:'payment',department:'',position_title:'',phone:'',payment_type:'transfer',account_number:'',account_name:'',bank_name:'',
@@ -45,6 +45,7 @@ export default function Requests({has,userId}){
  const normalizedQuery=q.toLowerCase()
  const matches=row=>[row.request_no,row.requester,row.program,row.department,row.purpose,row.status].join(' ').toLowerCase().includes(normalizedQuery)
  const filtered=rows.filter(matches)
+ const importIssues=importReview.find(slip=>slip.key===editingImport)?.issues||[]
  const drafts=importReview.filter(slip=>matches({...slip.header,request_no:slip.fileName,status:'Perlu diperiksa'}))
  const total=requestTotal(requestItems(items))
  const blankItem=()=>({item_name:'',qty:1,unit:masters.unit?.[0]||'pcs',unit_price:0})
@@ -57,7 +58,12 @@ export default function Requests({has,userId}){
    const prefilled=imported?.items?.length?imported.items:row?.request_items
    setEditing(row)
    setEditingImport(imported?.key??null)
-   setForm({...fields,...(imported?{request_date:'',program:'',request_time:'',...imported.header}:null)})
+   setForm({...fields,...(imported?{
+     request_date:'',program:'',request_time:'',
+     ...(imported.issues?.includes('Cara pembayaran belum jelas.')?{payment_type:''}:null),
+     ...(imported.issues?.includes('Jenis transaksi belum jelas.')?{transaction_type:''}:null),
+     ...imported.header,
+   }:null)})
    setItems(prefilled?.length?prefilled:[blankItem()])
    operationKey.current=imported?.key??crypto.randomUUID()
    setOpen(true)
@@ -86,14 +92,19 @@ export default function Requests({has,userId}){
      importAbort.current=null
      setReadingFile(false)
      const hash=Array.from(new Uint8Array(digest),value=>value.toString(16).padStart(2,'0')).join('')
-     const results=document.texts.map((text,index)=>({ ...parseRequest(text), index, fileName:file.name }))
+     const results=document.slips.map((slip,index)=>({ ...slip, index, fileName:file.name }))
        .filter(slip=>document.split||hasSlipData(slip))
      if(!results.length) throw new Error('Data tidak dikenali. Pilih slip yang lebih jelas atau masukkan pengajuan secara manual.')
+     const existingKeys=new Set(rows.filter(row=>row.created_by===userId).map(row=>row.creation_key))
      const review=[]
      const saved=[]
      let saveError=''
      for(const slip of results){
        slip.key=await getImportKey(hash,document.split,slip.index)
+       if(existingKeys.has(slip.key)){
+         saved.push(slip.key)
+         continue
+       }
        if(!canAutoImport(slip)){
          review.push(slip)
          continue
@@ -252,15 +263,16 @@ export default function Requests({has,userId}){
    <td>{dateID(slip.header.request_date)}</td>
    <td>{slip.header.requester||'-'}</td>
    <td><b>{slip.header.program||slip.header.department||'-'}</b><small>{slip.header.purpose}</small></td>
-   <td><span className="badge status-pending">Perlu diperiksa</span></td>
+   <td><span className="badge status-pending">Perlu diperiksa</span>{slip.issues?.length>0&&<small>{slip.issues[0]}</small>}</td>
    <td className="right amount">{slip.items.length?rupiah(requestTotal(slip.items)):'-'}</td>
    <td><button disabled={!!importProgress} onClick={()=>openForm(null,slip)}>Periksa</button></td>
  </tr>)}{filtered.map(r=><tr key={r.id}><td><b>{r.request_no}</b></td><td>{dateID(r.request_date)}</td><td>{r.requester}</td><td><b>{r.program||r.department||'-'}</b><small>{r.purpose}</small></td><td><span className={`badge status-${r.status}`}>{r.status==='pending'?'Menunggu':r.status==='approved'?'Disetujui':r.status==='rejected'?'Ditolak':'Selesai'}</span></td><td className="right amount">{rupiah(r.total_amount)}</td><td><div className="row-actions"><button title="Lihat slip" onClick={()=>view(r)}><Eye size={15}/></button>{canEdit(r)&&<button title="Edit pengajuan" onClick={()=>openForm(r)}><Pencil size={15}/></button>}{has('requests.delete')&&<button onClick={()=>remove(r.id)}><Trash2 size={15}/></button>}</div></td></tr>)}</tbody></table>{!filtered.length&&!drafts.length&&<Empty title="Belum ada pengajuan"/>}</div></Card>
 
  <Modal open={open} title={editing?'Edit pengajuan':'Buat pengajuan baru'} onClose={closeForm}><form className="form-grid wide-form request-form" onSubmit={save}>
+  {importIssues.length>0&&<ul className="form-error span2">{importIssues.map(issue=><li key={issue}>{issue}</li>)}</ul>}
   <label>Tanggal<input type="date" value={form.request_date} onChange={change('request_date')} required/></label>
   <label>Jam<input type="time" value={form.request_time} onChange={change('request_time')}/></label>
-  <label className="span2">Jenis transaksi<select value={form.transaction_type} onChange={change('transaction_type')}>{transactionTypes.map(([v,l])=><option value={v} key={v}>{l}</option>)}</select></label>
+  <label className="span2">Jenis transaksi<select value={form.transaction_type} onChange={change('transaction_type')} required>{!form.transaction_type&&<option value="" disabled>Pilih jenis transaksi</option>}{transactionTypes.map(([v,l])=><option value={v} key={v}>{l}</option>)}</select></label>
   <label>Nama SPA/Santri / Pemohon<input value={form.requester} onChange={change('requester')} required/></label>
   <label>Divisi/Departemen<input value={form.department} onChange={change('department')} placeholder="Dapur / Pendidikan / Baitulmal"/></label>
   <label>Amanah / Jabatan<input value={form.position_title} onChange={change('position_title')} placeholder="PIC Dapur"/></label>
@@ -268,7 +280,7 @@ export default function Requests({has,userId}){
   <MasterSelect label="Program internal" name="program" allowEmpty value={form.program}
     onChange={program=>setForm(previous=>({...previous,program}))} options={masters.program}
     onAdd={has('settings.manage')||has('requests.create')||has('requests.edit')||has('requests.approve')?addProgram:undefined}/>
-  <label>Cara pembayaran<select value={form.payment_type} onChange={change('payment_type')}>{paymentTypes.map(([v,l])=><option value={v} key={v}>{l}</option>)}</select></label>
+  <label>Cara pembayaran<select value={form.payment_type} onChange={change('payment_type')} required>{!form.payment_type&&<option value="" disabled>Pilih cara pembayaran</option>}{paymentTypes.map(([v,l])=><option value={v} key={v}>{l}</option>)}</select></label>
   <label className="span2">Tujuan transaksi<textarea value={form.purpose} onChange={change('purpose')} required placeholder="Belanja bahan pekanan"/></label>
   <label>No Rekening / VA<input value={form.account_number} onChange={change('account_number')}/></label>
   <label>Atas Nama<input value={form.account_name} onChange={change('account_name')}/></label>
@@ -301,7 +313,7 @@ export default function Requests({has,userId}){
       <PrintLine label="No Hp/WA" value={detail?.phone}/>
      </div>
      <div className="sp-textbox"><span>Tujuan Transaksi</span><p>{safe(detail?.purpose,'')}</p></div>
-     <div className="sp-payment-row"><span>Tujuan Transaksi</span><div>{paymentTypes.map(([v,l])=><PrintCheck key={v} checked={detail?.payment_type===v} label={l}/>)}</div></div>
+     <div className="sp-payment-row"><span>Cara Pembayaran</span><div>{paymentTypes.map(([v,l])=><PrintCheck key={v} checked={detail?.payment_type===v} label={l}/>)}</div></div>
      <div className="sp-fields">
       <PrintLine label="No Rekening/VA" value={detail?.account_number}/>
       <PrintLine label="Atas Nama" value={detail?.account_name}/>

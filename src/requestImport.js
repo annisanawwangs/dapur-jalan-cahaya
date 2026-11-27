@@ -14,12 +14,20 @@ const splitFields = [
 
 const transactionLabels = ['Uang Muka','Pembayaran','Penyaluran','Klaim/Reimburse','Retur Dana','Tunjangan','Pinjaman']
 const methodLabels = ['Tunai','Transfer','Virtual Account']
+const criticalFields = new Set(['Tanggal','Nama SPA/Santri','Tujuan Transaksi','No Rekening','Total Nominal'])
+const recognizable = texts => texts.map(text => ({ text }))
+const parseImported = ({text,issues}) => {
+  const slip = parseRequest(text)
+  return issues?.length ? {...slip,issues:[...new Set([...(slip.issues||[]),...issues])]} : slip
+}
+const lowConfidence = confidence => Number.isFinite(confidence) && confidence < 80
 
 async function readSlip(canvas, index, recognize, progress) {
   const { width, height } = canvas
   const half = height / 2
   const offset = index * 1.01
   const lines = []
+  const issues = []
   for (const [label, left, top, right, bottom] of splitFields) {
     progress('Slip ' + (index + 1) + ' · ' + label)
     const crop = document.createElement('canvas')
@@ -31,9 +39,14 @@ async function readSlip(canvas, index, recognize, progress) {
     context.fillStyle = '#fff'
     context.fillRect(0, 0, crop.width, crop.height)
     context.drawImage(canvas, left * width, (offset + top) * half, cropWidth, cropHeight, 20, 20, cropWidth, cropHeight)
-    const numeric = label === 'No Rekening' || label === 'Total Nominal'
-    const text = await recognize(crop, label === 'Tujuan Transaksi' ? '6' : '7', numeric)
-    if (text) lines.push(label + ': ' + text.replace(/\s*\n\s*/g, ' '))
+    const numeric = label === 'Total Nominal'
+    const {text,confidence} = await recognize(crop, label === 'Tujuan Transaksi' ? '6' : '7', numeric)
+    if (text) {
+      lines.push(label + ': ' + text.replace(/\s*\n\s*/g, ' '))
+      if (criticalFields.has(label) && lowConfidence(confidence)) issues.push(label+' perlu diperiksa dari hasil pindai.')
+    }
+    crop.width = 1
+    crop.height = 1
   }
   const context = canvas.getContext('2d')
   const radius = Math.max(2, Math.round(width * 2.6 / 990))
@@ -55,7 +68,7 @@ async function readSlip(canvas, index, recognize, progress) {
   const method = getChecked([201,277,390], 383, methodLabels)
   if (type) lines.push('Jenis transaksi: ' + type)
   if (method) lines.push('Metode: ' + method)
-  return lines.join('\n')
+  return { text: lines.join('\n'), issues }
 }
 
 const isPDF = file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
@@ -78,11 +91,11 @@ export async function readRequestFile(file, { split = false, progress = () => {}
   const cancelled = new DOMException('Impor dibatalkan.', 'AbortError')
   if (signal?.aborted) throw cancelled
   if (file.size > 50 * 1024 * 1024) throw new Error('Ukuran dokumen maksimal 50 MB.')
-  if (/\.txt$/i.test(file.name)) return { texts: splitRequestText(await file.text()), split: false }
+  if (/\.txt$/i.test(file.name)) return { slips: splitRequestText(await file.text()).map(text=>parseRequest(text)), split: false }
   if (/\.docx$/i.test(file.name)) {
     const { default: mammoth } = await loadAssets(() => import('mammoth/mammoth.browser.js'))
     const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })
-    return { texts: splitRequestText(result.value), split: false }
+    return { slips: splitRequestText(result.value).map(text=>parseRequest(text)), split: false }
   }
   if (!isPDF(file) && !/\.(jpe?g|png|webp)$/i.test(file.name)) {
     throw new Error('Gunakan PDF, DOCX, TXT, JPG, PNG, atau WEBP.')
@@ -141,17 +154,23 @@ export async function readRequestFile(file, { split = false, progress = () => {}
     return step('membaca gambar (OCR)', async () => {
       await worker.setParameters({
         tessedit_pageseg_mode: mode,
-        tessedit_char_whitelist: numeric ? '0123456789.,' : '',
+        tessedit_char_whitelist: numeric ? '0123456789.,-' : '',
         preserve_interword_spaces: '1',
       })
-      return (await worker.recognize(input)).data.text.trim()
+      const {data:{text,confidence}}=await worker.recognize(input)
+      return {text:text.trim(),confidence}
     }, 45000)
+  }
+
+  function splitScanned({text,confidence}) {
+    const issues=lowConfidence(confidence)?['Sebagian teks hasil pindai kurang jelas. Periksa data sebelum menyimpan.']:[]
+    return splitRequestText(text).map(part=>({text:part,issues}))
   }
 
   async function read() {
     if (!isPDF(file)) {
       report('Membaca gambar…')
-      return { texts: splitRequestText(await recognize(file)), split: false }
+      return { slips: splitScanned(await recognize(file)).map(parseImported), split: false }
     }
     const [pdfjs, workerAsset] = await loadAssets(() => Promise.all([
       import('pdfjs-dist'),
@@ -181,7 +200,7 @@ export async function readRequestFile(file, { split = false, progress = () => {}
       const textSlips = splitRequestText(text)
       if (textSlips.length > 1 || (!split && hasSlipData(parseRequest(text)))) {
         splitPage ||= textSlips.length > 1
-        slips.push(...textSlips)
+        slips.push(...recognizable(textSlips))
         continue
       }
       const natural = page.getViewport({ scale: 1 })
@@ -194,14 +213,14 @@ export async function readRequestFile(file, { split = false, progress = () => {}
       await step('menyiapkan gambar ' + pageLabel, () => renderTask.promise)
       renderTask = null
       report('Membaca hasil pindai ' + pageLabel + '…')
-      const scanned = splitRequestText(await recognize(canvas))
-      if (scanned.length > 1 || (!split && canAutoImport(parseRequest(scanned[0])))) {
+      const scanned = splitScanned(await recognize(canvas))
+      if (scanned.length > 1 || (!split && canAutoImport(parseRequest(scanned[0].text)))) {
         splitPage ||= scanned.length > 1
         slips.push(...scanned)
       } else {
         const halves = [await readSlip(canvas, 0, recognize, report), await readSlip(canvas, 1, recognize, report)]
         const looksLikeTwo = halves.every(half => {
-          const { header, items } = parseRequest(half)
+          const { header, items } = parseRequest(half.text)
           return header.requester && header.purpose && items.length
         })
         splitPage ||= split || looksLikeTwo
@@ -211,7 +230,7 @@ export async function readRequestFile(file, { split = false, progress = () => {}
       canvas.height = 1
       page.cleanup()
     }
-    return { texts: slips, split: splitPage }
+    return { slips: slips.map(parseImported), split: splitPage }
   }
 
   let abort
