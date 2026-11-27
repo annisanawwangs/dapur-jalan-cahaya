@@ -6,7 +6,7 @@ import { ImportAssetsError, readRequestFile } from '../requestImport'
 import { Card, Empty, Modal, Toast } from '../components/UI'
 
 import { localDate, localTime, requestItems, requestTotal } from '../domain'
-import { canAutoImport, getImportKey, parseRequest } from '../requestParse'
+import { canAutoImport, getImportKey, hasSlipData, parseRequest } from '../requestParse'
 const blank=()=>({
   request_date:localDate(),request_time:localTime(),requester:'',program:'',purpose:'',status:'pending',notes:'',
   transaction_type:'payment',department:'',position_title:'',phone:'',payment_type:'transfer',account_number:'',account_name:'',bank_name:'',
@@ -29,7 +29,9 @@ export default function Requests({has,userId}){
  const [rows,setRows]=React.useState([]),[q,setQ]=React.useState(''),[open,setOpen]=React.useState(false),[detailOpen,setDetailOpen]=React.useState(false),[form,setForm]=React.useState(blank()),[items,setItems]=React.useState([{item_name:'',qty:1,unit:'pcs',unit_price:0}]),[detail,setDetail]=React.useState(null),[toast,setToast]=React.useState(''),[masters,setMasters]=React.useState(fallback)
  const [editing,setEditing]=React.useState(null)
  const [saving,setSaving]=React.useState(false)
- const [importQueue,setImportQueue]=React.useState([])
+ const [importReview,setImportReview]=React.useState([])
+ const [editingImport,setEditingImport]=React.useState(null)
+ const [splitPdf,setSplitPdf]=React.useState(false)
  const [importProgress,setImportProgress]=React.useState('')
  const [importAssetError,setImportAssetError]=React.useState('')
  const uploading=React.useRef(false)
@@ -37,7 +39,10 @@ export default function Requests({has,userId}){
  const saveInProgress=React.useRef(false)
  React.useEffect(()=>{load()},[])
  async function load(){if(!supabase)return;const [r,o]=await Promise.all([supabase.from('purchase_requests').select('*, request_items(*)').order('request_date',{ascending:false}).order('created_at',{ascending:false}),getMasterOptions(['program','unit'])]);if(r.error){setToast(r.error.message);return} setRows(r.data||[]);const g=groupOptions(o);setMasters({...fallback,...Object.fromEntries(Object.entries(g).filter(([,v])=>v.length))})}
- const filtered=rows.filter(r=>[r.request_no,r.requester,r.program,r.department,r.purpose,r.status].join(' ').toLowerCase().includes(q.toLowerCase()))
+ const normalizedQuery=q.toLowerCase()
+ const matches=row=>[row.request_no,row.requester,row.program,row.department,row.purpose,row.status].join(' ').toLowerCase().includes(normalizedQuery)
+ const filtered=rows.filter(matches)
+ const drafts=importReview.filter(slip=>matches({...slip.header,request_no:slip.fileName,status:'Perlu diperiksa'}))
  const total=requestTotal(requestItems(items))
  const blankItem=()=>({item_name:'',qty:1,unit:masters.unit?.[0]||'pcs',unit_price:0})
  const canEdit=row=>row.status!=='completed' && (has('requests.approve') || (has('requests.edit') && row.status==='pending' && row.created_by===userId))
@@ -48,6 +53,7 @@ export default function Requests({has,userId}){
    if(row) fields.request_time=row.request_time?.slice(0,5)||''
    const prefilled=imported?.items?.length?imported.items:row?.request_items
    setEditing(row)
+   setEditingImport(imported?.key??null)
    setForm({...fields,...(imported?{request_date:'',program:'',request_time:'',...imported.header}:null)})
    setItems(prefilled?.length?prefilled:[blankItem()])
    operationKey.current=imported?.key??crypto.randomUUID()
@@ -56,7 +62,6 @@ export default function Requests({has,userId}){
  function closeForm(){
    if(saving) return
    setOpen(false)
-   setImportQueue([])
  }
  async function importRequest(e){
    const file=e.target.files?.[0]
@@ -67,21 +72,19 @@ export default function Requests({has,userId}){
    setImportAssetError('')
    setImportProgress('Membuka dokumen…')
    try{
-     const pdf=file.type==='application/pdf'||/\.pdf$/i.test(file.name)
-     const split=pdf&&confirm('Apakah setiap halaman PDF berisi dua slip, atas dan bawah? Pilih Batal jika hanya satu slip.')
-     const [documents,digest]=await Promise.all([
-       readRequestFile(file,{split,progress:setImportProgress}),
+     const [document,digest]=await Promise.all([
+       readRequestFile(file,{split:splitPdf,progress:setImportProgress}),
        file.arrayBuffer().then(bytes=>crypto.subtle.digest('SHA-256',bytes)),
      ])
      const hash=Array.from(new Uint8Array(digest),value=>value.toString(16).padStart(2,'0')).join('')
-     const results=documents.map((document,index)=>({ ...parseRequest(document), index }))
-       .filter(slip=>slip.header.requester||slip.header.purpose||slip.items.length)
+     const results=document.texts.map((text,index)=>({ ...parseRequest(text), index, fileName:file.name }))
+       .filter(slip=>document.split||hasSlipData(slip))
      if(!results.length) throw new Error('Data tidak dikenali. Pilih slip yang lebih jelas atau masukkan pengajuan secara manual.')
      const review=[]
-     let saved=0
+     const saved=[]
      let saveError=''
      for(const slip of results){
-       slip.key=await getImportKey(hash,split,slip.index)
+       slip.key=await getImportKey(hash,document.split,slip.index)
        if(!canAutoImport(slip)){
          review.push(slip)
          continue
@@ -89,23 +92,18 @@ export default function Requests({has,userId}){
        setImportProgress('Menyimpan slip '+(slip.index+1)+' ke rekap…')
        try{
          await saveRequest({ ...blank(), request_time:null, ...slip.header },slip.items,slip.key)
-         saved++
+         saved.push(slip.key)
        }catch(error){
          saveError=error.message
          review.push(slip)
        }
      }
-     if(saved){
-       setQ('')
-       await load()
-     }
-     const [first,...pending]=review
-     if(first){
-       setImportQueue(pending)
-       openForm(null,first)
-     }
-     const summary=saved?saved+' slip tersedia di rekap sebagai Menunggu.':''
-     const reviewMessage=review.length?review.length+' slip perlu diperiksa.':''
+     const importedKeys=new Set([...saved,...review.map(slip=>slip.key)])
+     setImportReview(previous=>[...previous.filter(slip=>!importedKeys.has(slip.key)),...review])
+     setQ('')
+     if(saved.length) await load()
+     const summary=saved.length?saved.length+' slip tersedia di rekap sebagai Menunggu.':''
+     const reviewMessage=review.length?review.length+' slip tersedia di tabel untuk diperiksa.':''
      setToast([summary,reviewMessage,saveError].filter(Boolean).join(' '))
    }catch(error){
      if(error instanceof ImportAssetsError){
@@ -143,15 +141,9 @@ export default function Requests({has,userId}){
    setSaving(true)
    try{
      await saveRequest(form,lines,operationKey.current,editing)
-     if(importQueue.length){
-       const [next,...pending]=importQueue
-       setImportQueue(pending)
-       openForm(null,next)
-       setToast('Pengajuan tersimpan. Periksa slip berikutnya.')
-     }else{
-       setOpen(false)
-       setToast('Pengajuan tersimpan.')
-     }
+     if(editingImport) setImportReview(previous=>previous.filter(slip=>slip.key!==editingImport))
+     setOpen(false)
+     setToast('Pengajuan tersimpan.')
      await load()
    }catch(error){
      setToast(error.message)
@@ -229,16 +221,27 @@ export default function Requests({has,userId}){
  }
  return <>
  <Toast message={toast}/>
+ {!!importReview.length&&<div className="info-banner">Slip berstatus Perlu diperiksa belum tersimpan. Lengkapi dan simpan sebelum meninggalkan halaman.</div>}
  {importAssetError&&<div className="info-banner" role="alert">
    <span>{importAssetError}</span>
    <button type="button" onClick={()=>window.location.reload()}>Muat ulang</button>
  </div>}
  {importProgress&&<div className="info-banner" role="status">{importProgress}</div>}
  <div className="toolbar"><div className="search"><Search size={17}/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Cari no, pemohon, program..."/></div>{has('requests.create')&&<div className="actions">
-   <button className="primary" disabled={!!importProgress} onClick={()=>{setImportQueue([]);openForm()}}><Plus size={17}/>Pengajuan</button>
+   <button className="primary" disabled={!!importProgress} onClick={()=>openForm()}><Plus size={17}/>Pengajuan</button>
+   <label><input type="checkbox" checked={splitPdf} disabled={!!importProgress}
+     onChange={event=>setSplitPdf(event.target.checked)}/> PDF dua slip per halaman</label>
    <label className="upload-btn"><Upload size={16}/>Impor ke rekap<input aria-label="Impor ke rekap" type="file" accept="application/pdf,.pdf,.docx,.txt,image/jpeg,image/png,image/webp" disabled={!!importProgress} onChange={importRequest}/></label>
  </div>}</div>
- <Card className="table-card"><div className="table-wrap"><table><thead><tr><th>No.</th><th>Tanggal</th><th>Pemohon</th><th>Program / Keperluan</th><th>Status</th><th className="right">Total</th><th></th></tr></thead><tbody>{filtered.map(r=><tr key={r.id}><td><b>{r.request_no}</b></td><td>{dateID(r.request_date)}</td><td>{r.requester}</td><td><b>{r.program||r.department||'-'}</b><small>{r.purpose}</small></td><td><span className={`badge status-${r.status}`}>{r.status==='pending'?'Menunggu':r.status==='approved'?'Disetujui':r.status==='rejected'?'Ditolak':'Selesai'}</span></td><td className="right amount">{rupiah(r.total_amount)}</td><td><div className="row-actions"><button title="Lihat slip" onClick={()=>view(r)}><Eye size={15}/></button>{canEdit(r)&&<button title="Edit pengajuan" onClick={()=>openForm(r)}><Pencil size={15}/></button>}{has('requests.delete')&&<button onClick={()=>remove(r.id)}><Trash2 size={15}/></button>}</div></td></tr>)}</tbody></table>{!filtered.length&&<Empty title="Belum ada pengajuan"/>}</div></Card>
+ <Card className="table-card"><div className="table-wrap"><table><thead><tr><th>No.</th><th>Tanggal</th><th>Pemohon</th><th>Program / Keperluan</th><th>Status</th><th className="right">Total</th><th></th></tr></thead><tbody>{drafts.map(slip=><tr key={slip.key}>
+   <td><b>Slip {slip.index+1}</b><small>{slip.fileName}</small></td>
+   <td>{dateID(slip.header.request_date)}</td>
+   <td>{slip.header.requester||'-'}</td>
+   <td><b>{slip.header.program||slip.header.department||'-'}</b><small>{slip.header.purpose}</small></td>
+   <td><span className="badge status-pending">Perlu diperiksa</span></td>
+   <td className="right amount">{slip.items.length?rupiah(requestTotal(slip.items)):'-'}</td>
+   <td><button disabled={!!importProgress} onClick={()=>openForm(null,slip)}>Periksa</button></td>
+ </tr>)}{filtered.map(r=><tr key={r.id}><td><b>{r.request_no}</b></td><td>{dateID(r.request_date)}</td><td>{r.requester}</td><td><b>{r.program||r.department||'-'}</b><small>{r.purpose}</small></td><td><span className={`badge status-${r.status}`}>{r.status==='pending'?'Menunggu':r.status==='approved'?'Disetujui':r.status==='rejected'?'Ditolak':'Selesai'}</span></td><td className="right amount">{rupiah(r.total_amount)}</td><td><div className="row-actions"><button title="Lihat slip" onClick={()=>view(r)}><Eye size={15}/></button>{canEdit(r)&&<button title="Edit pengajuan" onClick={()=>openForm(r)}><Pencil size={15}/></button>}{has('requests.delete')&&<button onClick={()=>remove(r.id)}><Trash2 size={15}/></button>}</div></td></tr>)}</tbody></table>{!filtered.length&&!drafts.length&&<Empty title="Belum ada pengajuan"/>}</div></Card>
 
  <Modal open={open} title={editing?'Edit pengajuan':'Buat pengajuan baru'} onClose={closeForm}><form className="form-grid wide-form request-form" onSubmit={save}>
   <label>Tanggal<input type="date" value={form.request_date} onChange={change('request_date')} required/></label>

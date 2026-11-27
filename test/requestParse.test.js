@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { canAutoImport, getImportKey, parseRequest } from '../src/requestParse.js'
+import { canAutoImport, getImportKey, parseRequest, splitRequestText } from '../src/requestParse.js'
 
 test('imports a slip with Indonesian dates, account numbers, and decimal rupiah', () => {
   const { header, items } = parseRequest(`
@@ -44,4 +44,24 @@ test('the same uploaded file and slip position generate the same retry key', asy
   assert.equal(await getImportKey('sample-digest', true, 0), key)
   assert.notEqual(await getImportKey('sample-digest', true, 1), key)
   assert.notEqual(await getImportKey('sample-digest', false, 0), key)
+})
+
+test('two slip headings produce independent records, including a slip missing a field', () => {
+  const text = [
+    'SLIP PENGAJUAN', 'Tanggal: 27 Nov 2026', 'Pemohon: Tim A', 'Keperluan: Beras', 'Total: 12.500',
+    'SLIP PENGAJUAN', 'Pemohon: Tim B', 'Keperluan: Telur', 'Total: 30.000',
+  ].join('\n')
+  const slips = splitRequestText(text).map(parseRequest)
+  assert.equal(slips.length, 2)
+  assert.deepEqual(slips.map(slip => slip.header.requester), ['Tim A', 'Tim B'])
+  assert.deepEqual(slips.map(slip => slip.items[0].unit_price), [12500, 30000])
+  assert.deepEqual(slips.map(canAutoImport), [true, false])
+})
+
+test('two repeated date and applicant blocks split while a separate transaction date stays in one slip', () => {
+  const blocks = ['Tanggal: 27/11/2026\nPemohon: Tim A\nKeperluan: Beras\nTotal: 1000',
+    'Tanggal: 28 / 11 / 2026\nPemohon: Tim B\nKeperluan: Telur\nTotal: 2000']
+  assert.deepEqual(splitRequestText(blocks.join('\n')).map(parseRequest).map(slip => slip.header.request_date),
+    ['2026-11-27', '2026-11-28'])
+  assert.equal(splitRequestText(blocks[0] + '\nTanggal Transaksi: 30/11/2026').length, 1)
 })

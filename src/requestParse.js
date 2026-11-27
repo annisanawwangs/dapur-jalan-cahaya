@@ -22,10 +22,12 @@ const transactionTypes = [
 
 function parseDate(text) {
   const named = text.match(/\bTanggal\s*[:：]?\s*(\d{1,2})\s+([a-z]+)\s+(20\d{2})/i)
-  const numeric = text.match(/\bTanggal\s*[:：]?\s*(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4}|\d{2})\b/i)
+  const numeric = text.match(/\bTanggal\s*[:：]?\s*(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*(\d{4}|\d{2})\b/i)
   const iso = text.match(/\bTanggal\s*[:：]?\s*(20\d{2})-(\d{2})-(\d{2})\b/i)
+  const monthName = named?.[2].toLowerCase()
+  const namedMonth = months.findIndex(month => month === monthName || month.slice(0, 3) === monthName) + 1
   const dateParts = iso ? [iso[1], iso[2], iso[3]]
-    : named ? [named[3], months.indexOf(named[2].toLowerCase()) + 1, named[1]]
+    : named ? [named[3], namedMonth, named[1]]
     : numeric && [numeric[3].length === 2 ? '20' + numeric[3] : numeric[3], numeric[2], numeric[1]]
   if (!dateParts) return null
   const [year, month, day] = dateParts
@@ -72,6 +74,32 @@ export function parseRequest(text) {
 export function canAutoImport({ header, items }) {
   return Boolean(header.request_date && header.requester && header.purpose
     && items.length && items.every(item => item.unit_price > 0 && item.unit_price < 1e13))
+}
+
+export function hasSlipData({ header, items }) {
+  return Boolean(header.requester || header.purpose || items.length)
+}
+
+export function splitRequestText(text) {
+  const matches = Array.from(text.matchAll(/^\s*(?:slip|formulir|form)\s+pengajuan(?:\s+dana)?\b/gim))
+  if (matches.length > 1) {
+    return matches.map((match, index) => text.slice(match.index, matches[index + 1]?.index))
+  }
+  // Some exports omit the repeated title but retain each slip's date or requester.
+  const boundaries = [
+    /^\s*tanggal\s*[:：]?\s*\d/gim,
+    /^\s*(?:nama\s+(?:spa\s*\/\s*santri(?:\s*\/\s*pemohon)?|pemohon)|pemohon)\s*[:：]/gim,
+  ]
+  for (const pattern of boundaries) {
+    const starts = Array.from(text.matchAll(pattern), match => match.index)
+    if (starts.length < 2) continue
+    const parts = starts.map((start, index) => text.slice(index === 0 ? 0 : start, starts[index + 1]))
+    if (parts.every(part => {
+      const { header, items } = parseRequest(part)
+      return header.requester && header.purpose && items.length
+    })) return parts
+  }
+  return [text]
 }
 
 export async function getImportKey(fileDigest, split, index) {
