@@ -1,3 +1,5 @@
+import { canAutoImport, hasSlipData, parseRequest, splitRequestText } from './requestParse'
+
 const splitFields = [
   ['Tanggal', .18, .139, .47, .164],
   ['Nama SPA/Santri', .18, .251, .47, .276],
@@ -74,11 +76,11 @@ async function loadAssets(load) {
 
 export async function readRequestFile(file, { split = false, progress = () => {} } = {}) {
   if (file.size > 50 * 1024 * 1024) throw new Error('Ukuran dokumen maksimal 50 MB.')
-  if (/\.txt$/i.test(file.name)) return [await file.text()]
+  if (/\.txt$/i.test(file.name)) return { texts: splitRequestText(await file.text()), split: false }
   if (/\.docx$/i.test(file.name)) {
     const { default: mammoth } = await loadAssets(() => import('mammoth/mammoth.browser.js'))
     const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })
-    return [result.value]
+    return { texts: splitRequestText(result.value), split: false }
   }
   if (!isPDF(file) && !/\.(jpe?g|png|webp)$/i.test(file.name)) {
     throw new Error('Gunakan PDF, DOCX, TXT, JPG, PNG, atau WEBP.')
@@ -118,7 +120,7 @@ export async function readRequestFile(file, { split = false, progress = () => {}
   async function read() {
     if (!isPDF(file)) {
       progress('Membaca gambar…')
-      return [await recognize(file)]
+      return { texts: splitRequestText(await recognize(file)), split: false }
     }
     const [pdfjs, workerAsset] = await loadAssets(() => Promise.all([
       import('pdfjs-dist'),
@@ -130,17 +132,18 @@ export async function readRequestFile(file, { split = false, progress = () => {}
     const documentFile = await pdf.promise
     if (documentFile.numPages > 10) throw new Error('PDF maksimal 10 halaman.')
     const slips = []
+    let splitPage = false
     for (let number = 1; number <= documentFile.numPages; number++) {
       ensureRunning()
       progress('Halaman ' + number + ' dari ' + documentFile.numPages)
       const page = await documentFile.getPage(number)
-      if (!split) {
-        const content = await page.getTextContent()
-        const text = content.items.map(item => item.str + (item.hasEOL ? '\n' : ' ')).join('')
-        if (text.trim().length > 40) {
-          slips.push(text)
-          continue
-        }
+      const content = await page.getTextContent()
+      const text = content.items.map(item => item.str + (item.hasEOL ? '\n' : ' ')).join('')
+      const textSlips = splitRequestText(text)
+      if (textSlips.length > 1 || (!split && hasSlipData(parseRequest(text)))) {
+        splitPage ||= textSlips.length > 1
+        slips.push(...textSlips)
+        continue
       }
       const natural = page.getViewport({ scale: 1 })
       const viewport = page.getViewport({ scale: Math.min(2480 / natural.width, 4000 / natural.height) })
@@ -148,16 +151,23 @@ export async function readRequestFile(file, { split = false, progress = () => {}
       canvas.width = Math.ceil(viewport.width)
       canvas.height = Math.ceil(viewport.height)
       await page.render({ canvas, viewport }).promise
-      if (split) {
-        slips.push(await readSlip(canvas, 0, recognize, progress))
-        slips.push(await readSlip(canvas, 1, recognize, progress))
+      const scanned = splitRequestText(await recognize(canvas))
+      if (scanned.length > 1 || (!split && canAutoImport(parseRequest(scanned[0])))) {
+        splitPage ||= scanned.length > 1
+        slips.push(...scanned)
       } else {
-        slips.push(await recognize(canvas))
+        const halves = [await readSlip(canvas, 0, recognize, progress), await readSlip(canvas, 1, recognize, progress)]
+        const looksLikeTwo = halves.every(half => {
+          const { header, items } = parseRequest(half)
+          return header.requester && header.purpose && items.length
+        })
+        splitPage ||= split || looksLikeTwo
+        slips.push(...(split || looksLikeTwo ? halves : scanned))
       }
       canvas.width = 1
       canvas.height = 1
     }
-    return slips
+    return { texts: slips, split: splitPage }
   }
 
   try {
