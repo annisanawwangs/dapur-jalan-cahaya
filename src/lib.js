@@ -35,3 +35,14 @@ export async function getMasterOptions(types=[]){
 }
 
 export const groupOptions=(rows=[])=>rows.reduce((a,r)=>{(a[r.type] ||= []).push(r.name);return a},{})
+
+export async function addMasterOption(type, name, currentOptions) {
+  const cleaned = name.trim()
+  if (!cleaned) return null
+  const existing = currentOptions.find(option => option.toLowerCase() === cleaned.toLowerCase())
+  if (existing) return existing
+  const { error } = await supabase.from('master_options')
+    .insert({ type, name: cleaned, active: true, sort_order: 999 })
+  if (error) throw error
+  return cleaned
+}

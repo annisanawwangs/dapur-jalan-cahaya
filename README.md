@@ -7,7 +7,7 @@ Dashboard operasional dapur berbasis **React/Vite + Supabase + Vercel**. Versi i
 1. **Ringkasan** — saldo bulan berjalan, pemasukan, pengeluaran, stok minimum, pengajuan pending, grafik arus kas.
 2. **Catatan Keuangan** — pemasukan/pengeluaran, kategori, merchant, program, metode pembayaran, edit/hapus sesuai permission, print dan CSV.
 3. **Stok Bahan** — master bahan, stok minimum, stok masuk/keluar, histori mutasi, harga beli acuan.
-4. **Pengajuan & Nota** — nomor slip otomatis, rincian barang, approval, print slip, upload nota private, serta pencatatan pencairan ke keuangan saat pengajuan ditandai selesai.
+4. **Pengajuan & Nota** — nomor slip otomatis, impor slip PDF, DOCX, TXT, dan gambar, rincian barang, approval, print slip, upload nota private, serta pencatatan pencairan ke keuangan saat pengajuan ditandai selesai.
 5. **Member & Akses** — buat akun member dengan password awal, ubah role, aktif/nonaktifkan member.
 6. **Pengaturan** — identitas dashboard, kategori/program/merchant/metode pembayaran/kategori bahan/satuan, matriks hak akses role.
 7. **Akun Saya** — ubah nama tampilan dan atur/ganti password.
@@ -78,7 +78,7 @@ Dari menu **Pengaturan**, Admin dapat mengelola:
 - Satuan bahan/barang.
 - Hak akses tiap role non-Admin.
 
-Perubahan data master otomatis dipakai pada form Keuangan, Stok, dan Pengajuan.
+Perubahan data master otomatis dipakai pada form Keuangan, Stok, dan Pengajuan. Impor slip membaca dokumen di browser dan membuka formulir untuk diperiksa sebelum disimpan.
 
 ## Keamanan
 
