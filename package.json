@@ -6,13 +6,20 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prebuild": "node scripts/prepare-ocr.mjs",
+    "predev": "node scripts/prepare-ocr.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.57.4",
+    "@tesseract.js-data/eng": "1.0.0",
     "lucide-react": "0.468.0",
+    "mammoth": "1.11.0",
+    "pdfjs-dist": "5.4.624",
     "react": "19.1.1",
-    "react-dom": "19.1.1"
+    "react-dom": "19.1.1",
+    "tesseract.js": "6.0.1",
+    "tesseract.js-core": "6.0.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "5.0.2",

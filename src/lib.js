@@ -6,7 +6,7 @@ const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VIT
 export const supabase = url && key ? createClient(url, key) : null
 
 export const rupiah = (value = 0) => new Intl.NumberFormat('id-ID', {
-  style: 'currency', currency: 'IDR', maximumFractionDigits: 0,
+  style: 'currency', currency: 'IDR', minimumFractionDigits: 0, maximumFractionDigits: 2,
 }).format(Number(value || 0))
 
 export const num = (value = 0) => new Intl.NumberFormat('id-ID').format(Number(value || 0))
@@ -35,3 +35,14 @@ export async function getMasterOptions(types=[]){
 }
 
 export const groupOptions=(rows=[])=>rows.reduce((a,r)=>{(a[r.type] ||= []).push(r.name);return a},{})
+
+export async function addMasterOption(type, name, currentOptions) {
+  const cleaned = name.trim()
+  if (!cleaned) return null
+  const existing = currentOptions.find(option => option.toLowerCase() === cleaned.toLowerCase())
+  if (existing) return existing
+  const { error } = await supabase.from('master_options')
+    .insert({ type, name: cleaned, active: true, sort_order: 999 })
+  if (error) throw error
+  return cleaned
+}

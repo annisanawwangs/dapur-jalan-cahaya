@@ -49,7 +49,7 @@ create table if not exists public.role_permissions (
 with permissions(permission) as (values
  ('dashboard.view'),('finance.view'),('finance.create'),('finance.edit'),('finance.delete'),
  ('stock.view'),('stock.manage'),('stock.delete'),
- ('requests.view'),('requests.create'),('requests.approve'),('requests.delete'),
+ ('requests.view'),('requests.create'),('requests.edit'),('requests.approve'),('requests.delete'),
  ('members.manage'),('settings.manage')
 )
 insert into public.role_permissions(role_id,permission,allowed)
@@ -57,8 +57,8 @@ select r.id,p.permission,
   case
     when r.slug='admin' then true
     when r.slug='manager' then p.permission not in ('members.manage','settings.manage')
-    when r.slug='finance' then p.permission in ('dashboard.view','finance.view','finance.create','finance.edit','finance.delete','requests.view','requests.create')
-    when r.slug='stock' then p.permission in ('dashboard.view','stock.view','stock.manage','stock.delete','requests.view','requests.create')
+    when r.slug='finance' then p.permission in ('dashboard.view','finance.view','finance.create','finance.edit','finance.delete','requests.view','requests.create','requests.edit')
+    when r.slug='stock' then p.permission in ('dashboard.view','stock.view','stock.manage','stock.delete','requests.view','requests.create','requests.edit')
     when r.slug='viewer' then p.permission in ('dashboard.view','finance.view','stock.view','requests.view')
     else false
   end
@@ -259,7 +259,14 @@ create table if not exists public.purchase_requests (
   created_by uuid references auth.users(id) default auth.uid(),created_at timestamptz not null default now(),updated_at timestamptz not null default now()
 );
 create or replace function public.set_request_no() returns trigger language plpgsql set search_path=public as $$
-begin if new.request_no is null or btrim(new.request_no)='' then new.request_no:='DJC-'||to_char(coalesce(new.request_date,current_date),'YYYYMM')||'-'||lpad(nextval('public.dapur_request_seq')::text,4,'0'); end if; return new; end;$$;
+declare v_number text;
+begin
+  if new.request_no is null or btrim(new.request_no)='' then
+    v_number:=nextval('public.dapur_request_seq')::text;
+    new.request_no:='DJC-'||to_char(coalesce(new.request_date,current_date),'YYYYMM')||'-'||lpad(v_number,greatest(4,length(v_number)),'0');
+  end if;
+  return new;
+end;$$;
 drop trigger if exists trg_set_request_no on public.purchase_requests;
 create trigger trg_set_request_no before insert on public.purchase_requests for each row execute function public.set_request_no();
 
@@ -270,6 +277,120 @@ create table if not exists public.receipts (
  id uuid primary key default gen_random_uuid(),request_id uuid not null references public.purchase_requests(id) on delete cascade,file_name text not null,file_path text not null,created_by uuid references auth.users(id) default auth.uid(),created_at timestamptz not null default now()
 );
 create index if not exists receipts_request_idx on public.receipts(request_id);
+
+alter table public.purchase_requests
+  add column if not exists request_time time,
+  add column if not exists transaction_type text,
+  add column if not exists department text,
+  add column if not exists position_title text,
+  add column if not exists phone text,
+  add column if not exists payment_type text,
+  add column if not exists account_number text,
+  add column if not exists account_name text,
+  add column if not exists bank_name text,
+  add column if not exists vendor_name text,
+  add column if not exists invoice_no text,
+  add column if not exists vendor_address text,
+  add column if not exists transaction_date date,
+  add column if not exists transaction_time time,
+  add column if not exists creation_key uuid,
+  add column if not exists last_operation_key uuid;
+create unique index if not exists purchase_requests_creation_key_idx
+  on public.purchase_requests(created_by, creation_key) where creation_key is not null;
+
+alter table public.transactions
+  add column if not exists source_request_id uuid references public.purchase_requests(id) on delete restrict;
+create unique index if not exists transactions_source_request_id_key on public.transactions(source_request_id);
+
+CREATE OR REPLACE FUNCTION public.save_purchase_request_v4(p_request_id uuid, p_header jsonb, p_items jsonb, p_operation_key uuid, p_expected_updated_at timestamp with time zone DEFAULT NULL::timestamp with time zone)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SET search_path TO ''
+AS $function$
+declare v_row public.purchase_requests%rowtype; v_id uuid; v_total numeric(15,2); v_item jsonb; v_qty numeric(15,3); v_price numeric(15,2); v_header public.purchase_requests%rowtype;
+begin
+ if auth.uid() is null or not private.is_active_member() then raise exception 'Sesi tidak valid atau akun tidak aktif'; end if;
+ if p_operation_key is null then raise exception 'Identitas penyimpanan wajib tersedia'; end if;
+ if jsonb_typeof(p_header) is distinct from 'object' or jsonb_typeof(p_items) is distinct from 'array' then raise exception 'Data pengajuan tidak valid'; end if;
+ if jsonb_array_length(p_items)=0 or jsonb_array_length(p_items)>200 then raise exception 'Rincian barang harus berisi 1 sampai 200 baris'; end if;
+ v_header:=jsonb_populate_record(null::public.purchase_requests,p_header);
+ if btrim(coalesce(v_header.requester,''))='' or btrim(coalesce(v_header.purpose,''))='' or v_header.request_date is null then raise exception 'Tanggal, pemohon, dan tujuan wajib diisi'; end if;
+ if v_header.transaction_type not in ('advance','payment','disbursement','claim_reimburse','refund','allowance','loan') or v_header.transaction_type is null then raise exception 'Jenis transaksi tidak valid'; end if;
+ if v_header.payment_type not in ('cash','transfer','virtual_account') or v_header.payment_type is null then raise exception 'Cara pembayaran tidak valid'; end if;
+ v_total:=0;
+ for v_item in select value from jsonb_array_elements(p_items) loop
+  if btrim(coalesce(v_item->>'item_name',''))='' then raise exception 'Nama barang wajib diisi'; end if;
+  v_qty:=(v_item->>'qty')::numeric(15,3); v_price:=(v_item->>'unit_price')::numeric(15,2);
+  if v_qty is null or v_qty<=0 or v_qty::text in ('NaN','Infinity','-Infinity') or v_price is null or v_price<0 or v_price::text in ('NaN','Infinity','-Infinity') then raise exception 'Jumlah harus positif dan harga tidak boleh negatif'; end if;
+  v_total:=v_total+round(v_qty*v_price,2);
+ end loop;
+ -- Serializes retries of the same operation, including concurrent clicks.
+ perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text||p_operation_key::text,0));
+ if p_request_id is null then
+  if not private.has_permission('requests.create') then raise exception 'Anda tidak memiliki akses membuat pengajuan'; end if;
+  select id into v_id from public.purchase_requests where created_by=auth.uid() and creation_key=p_operation_key;
+  if found then return v_id; end if;
+  insert into public.purchase_requests(request_date,request_time,requester,program,purpose,status,notes,total_amount,transaction_type,department,position_title,phone,payment_type,account_number,account_name,bank_name,vendor_name,invoice_no,vendor_address,creation_key,last_operation_key)
+  values(v_header.request_date,v_header.request_time,btrim(v_header.requester),v_header.program,btrim(v_header.purpose),'pending',v_header.notes,v_total,v_header.transaction_type,v_header.department,v_header.position_title,v_header.phone,v_header.payment_type,v_header.account_number,v_header.account_name,v_header.bank_name,v_header.vendor_name,v_header.invoice_no,v_header.vendor_address,p_operation_key,p_operation_key) returning id into v_id;
+ else
+  select * into v_row from public.purchase_requests where id=p_request_id for update;
+  if not found then raise exception 'Pengajuan tidak ditemukan atau tidak dapat diakses'; end if;
+  if not (private.has_permission('requests.approve') or (private.has_permission('requests.edit') and v_row.created_by=auth.uid() and v_row.status='pending')) then raise exception 'Pengajuan ini tidak dapat Anda edit'; end if;
+  if v_row.last_operation_key=p_operation_key then return v_row.id; end if;
+  if v_row.status='completed' then raise exception 'Pengajuan selesai tidak dapat diedit'; end if;
+  if p_expected_updated_at is null or v_row.updated_at is distinct from p_expected_updated_at then raise exception 'Pengajuan sudah berubah. Tutup formulir, muat ulang, lalu periksa perubahan terbaru.'; end if;
+  v_id:=v_row.id;
+  update public.purchase_requests set request_date=v_header.request_date,request_time=v_header.request_time,requester=btrim(v_header.requester),program=v_header.program,purpose=btrim(v_header.purpose),notes=v_header.notes,total_amount=v_total,transaction_type=v_header.transaction_type,department=v_header.department,position_title=v_header.position_title,phone=v_header.phone,payment_type=v_header.payment_type,account_number=v_header.account_number,account_name=v_header.account_name,bank_name=v_header.bank_name,vendor_name=v_header.vendor_name,invoice_no=v_header.invoice_no,vendor_address=v_header.vendor_address,last_operation_key=p_operation_key where id=v_id;
+  delete from public.request_items where request_id=v_id;
+ end if;
+ insert into public.request_items(request_id,item_name,qty,unit,unit_price,subtotal)
+ select v_id,btrim(x->>'item_name'),(x->>'qty')::numeric(15,3),coalesce(nullif(btrim(x->>'unit'),''),'pcs'),(x->>'unit_price')::numeric(15,2),round((x->>'qty')::numeric(15,3)*(x->>'unit_price')::numeric(15,2),2)
+ from jsonb_array_elements(p_items) x;
+ return v_id;
+end;$function$;
+
+CREATE OR REPLACE FUNCTION private.guard_purchase_request_update()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO ''
+AS $function$
+begin
+ if new.id is distinct from old.id or new.request_no is distinct from old.request_no or new.created_by is distinct from old.created_by or new.creation_key is distinct from old.creation_key or new.created_at is distinct from old.created_at then
+  raise exception 'Identitas dan nomor pengajuan tidak boleh diubah';
+ end if;
+ if new.status is distinct from old.status then
+  if not private.has_permission('requests.approve') then raise exception 'Anda tidak memiliki akses mengubah status pengajuan'; end if;
+  if not ((old.status='pending' and new.status in ('approved','rejected')) or (old.status='approved' and new.status='completed')) then raise exception 'Perubahan status tidak sesuai alur pengajuan'; end if;
+  if new.status='completed' then
+   new.transaction_date:=(now() at time zone 'Asia/Makassar')::date;
+   new.transaction_time:=(now() at time zone 'Asia/Makassar')::time;
+  end if;
+ end if;
+ return new;
+end;$function$;
+
+CREATE OR REPLACE FUNCTION private.post_request_income()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+begin
+ if old.status = 'approved' and new.status = 'completed' then
+  if auth.uid() is null or not private.has_permission('requests.approve') then raise exception 'Akses pencairan ditolak'; end if;
+  insert into public.transactions(type,amount,category,description,merchant,program,payment_method,transaction_date,created_by,source_request_id)
+  values ('income',new.total_amount,'Pencairan Pengajuan',concat_ws(' - ',new.request_no,new.purpose),'Finance Jalan Cahaya',new.program,case when lower(new.payment_type)='transfer' then 'Transfer' when lower(new.payment_type) in ('cash','tunai') then 'Cash' else coalesce(new.payment_type,'Cash') end,coalesce(new.transaction_date,(now() at time zone 'Asia/Makassar')::date),auth.uid(),new.id)
+  on conflict (source_request_id) do nothing;
+ end if;
+ return new;
+end; $function$;
+
+drop trigger if exists trg_guard_purchase_request_update on public.purchase_requests;
+create trigger trg_guard_purchase_request_update before update on public.purchase_requests
+  for each row execute function private.guard_purchase_request_update();
+drop trigger if exists trg_post_request_income on public.purchase_requests;
+create trigger trg_post_request_income after update of status on public.purchase_requests
+  for each row when (old.status is distinct from new.status) execute function private.post_request_income();
 
 -- updated_at otomatis
 create or replace function public.set_updated_at() returns trigger language plpgsql as $$ begin new.updated_at=now(); return new; end; $$;
@@ -333,12 +454,21 @@ create policy stock_movements_select on public.stock_movements for select to aut
 create policy stock_movements_insert on public.stock_movements for insert to authenticated with check (private.has_permission('stock.manage'));
 
 create policy purchase_requests_select on public.purchase_requests for select to authenticated using (private.has_permission('requests.view'));
-create policy purchase_requests_insert on public.purchase_requests for insert to authenticated with check (private.has_permission('requests.create'));
-create policy purchase_requests_update on public.purchase_requests for update to authenticated using (private.has_permission('requests.approve')) with check (private.has_permission('requests.approve'));
+create policy purchase_requests_insert on public.purchase_requests for insert to authenticated
+  with check (private.has_permission('requests.create') and created_by=(select auth.uid()) and status='pending');
+create policy purchase_requests_update on public.purchase_requests for update to authenticated
+  using (private.has_permission('requests.approve') or (private.has_permission('requests.edit') and created_by=(select auth.uid()) and status='pending'))
+  with check (private.has_permission('requests.approve') or (private.has_permission('requests.edit') and created_by=(select auth.uid()) and status='pending'));
 create policy purchase_requests_delete on public.purchase_requests for delete to authenticated using (private.has_permission('requests.delete'));
 create policy request_items_select on public.request_items for select to authenticated using (private.has_permission('requests.view'));
-create policy request_items_insert on public.request_items for insert to authenticated with check (private.has_permission('requests.create'));
-create policy request_items_delete on public.request_items for delete to authenticated using (private.has_permission('requests.delete'));
+create policy request_items_insert on public.request_items for insert to authenticated with check (
+  exists (select 1 from public.purchase_requests p where p.id=request_id and (
+    private.has_permission('requests.approve') or
+    ((private.has_permission('requests.create') or private.has_permission('requests.edit')) and p.created_by=(select auth.uid()) and p.status='pending'))));
+create policy request_items_delete on public.request_items for delete to authenticated using (
+  exists (select 1 from public.purchase_requests p where p.id=request_id and (
+    private.has_permission('requests.delete') or private.has_permission('requests.approve') or
+    (private.has_permission('requests.edit') and p.created_by=(select auth.uid()) and p.status='pending'))));
 create policy receipts_select on public.receipts for select to authenticated using (private.has_permission('requests.view'));
 create policy receipts_insert on public.receipts for insert to authenticated with check (private.has_permission('requests.create'));
 create policy receipts_delete on public.receipts for delete to authenticated using (private.has_permission('requests.delete'));
@@ -358,6 +488,10 @@ grant select,insert,delete on public.request_items,public.receipts to authentica
 grant usage,select on sequence public.dapur_request_seq to authenticated;
 revoke all on function public.record_stock_movement(uuid,text,numeric,numeric,text,date) from public,anon;
 grant execute on function public.record_stock_movement(uuid,text,numeric,numeric,text,date) to authenticated;
+revoke all on function public.save_purchase_request_v4(uuid,jsonb,jsonb,uuid,timestamptz) from public,anon;
+grant execute on function public.save_purchase_request_v4(uuid,jsonb,jsonb,uuid,timestamptz) to authenticated;
+revoke all on function private.guard_purchase_request_update() from public,anon,authenticated;
+revoke all on function private.post_request_income() from public,anon,authenticated;
 
 -- -------------------------- STORAGE ----------------------------
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)

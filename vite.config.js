@@ -61,6 +61,7 @@ export default defineConfig({
 
       workbox: {
         cleanupOutdatedCaches: true,
+        globIgnores: ['**/ocr/**'],
         navigateFallback: '/index.html',
 
         globPatterns: [

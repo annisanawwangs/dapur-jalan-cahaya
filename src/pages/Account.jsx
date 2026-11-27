@@ -14,7 +14,8 @@ import InstallApp
 
 export default function Account({
   profile,
-  onChanged
+  onChanged,
+  installApp
 }) {
 
   const [
@@ -133,7 +134,7 @@ export default function Account({
         message={toast}
       />
 
-      <InstallApp />
+      <InstallApp {...installApp} />
 
       <div className="settings-grid">
 

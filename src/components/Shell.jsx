@@ -1,7 +1,7 @@
 import React from 'react'
 import { LayoutDashboard, WalletCards, Boxes, ReceiptText, LogOut, Menu, X, Users, Settings, CircleUserRound } from 'lucide-react'
 
-const items = [
+export const items = [
   ['dashboard','Ringkasan',LayoutDashboard,'dashboard.view'],
   ['finance','Catatan Keuangan',WalletCards,'finance.view'],
   ['stock','Stok Bahan',Boxes,'stock.view'],
@@ -14,7 +14,6 @@ const items = [
 export default function Shell({page,setPage,user,profile,has,config,onLogout,children}){
   const [open,setOpen]=React.useState(false)
   const visible=items.filter(i=>has(i[3]))
-  React.useEffect(()=>{if(!visible.some(i=>i[0]===page)) setPage(visible[0]?.[0]||'account')},[page,visible.map(x=>x[0]).join('|')])
   const current=items.find(i=>i[0]===page)
   const appName=config?.app_name||'Dapur Jalan Cahaya'
   const appSubtitle=config?.app_subtitle||'Operasional dapur'
