@@ -1,10 +1,11 @@
 import React from 'react'
 import { Plus, Search, Eye, Pencil, Trash2, Upload, Printer, CheckCircle2, XCircle } from 'lucide-react'
 import { supabase, rupiah, dateID, getMasterOptions, groupOptions, addMasterOption } from '../lib'
+import MasterSelect from '../components/MasterSelect'
 import { Card, Empty, Modal, Toast } from '../components/UI'
 
 import { localDate, localTime, requestItems, requestTotal } from '../domain'
-import { parseRequest } from '../requestParse'
+import { canAutoImport, getImportKey, parseRequest } from '../requestParse'
 const blank=()=>({
   request_date:localDate(),request_time:localTime(),requester:'',program:'',purpose:'',status:'pending',notes:'',
   transaction_type:'payment',department:'',position_title:'',phone:'',payment_type:'transfer',account_number:'',account_name:'',bank_name:'',
@@ -45,9 +46,9 @@ export default function Requests({has,userId}){
    if(row) fields.request_time=row.request_time?.slice(0,5)||''
    const prefilled=imported?.items?.length?imported.items:row?.request_items
    setEditing(row)
-   setForm({...fields,...imported?.header})
+   setForm({...fields,...(imported?{request_date:'',program:'',request_time:'',...imported.header}:null)})
    setItems(prefilled?.length?prefilled:[blankItem()])
-   operationKey.current=crypto.randomUUID()
+   operationKey.current=imported?.key??crypto.randomUUID()
    setOpen(true)
  }
  function closeForm(){
@@ -59,26 +60,67 @@ export default function Requests({has,userId}){
    const file=e.target.files?.[0]
    e.target.value=''
    if(!file||uploading.current||saveInProgress.current) return
+   if(file.size>50*1024*1024){setToast('Ukuran dokumen maksimal 50 MB.');return}
    uploading.current=true
    setImportProgress('Membuka dokumen…')
    try{
      const pdf=file.type==='application/pdf'||/\.pdf$/i.test(file.name)
      const split=pdf&&confirm('Apakah setiap halaman PDF berisi dua slip, atas dan bawah? Pilih Batal jika hanya satu slip.')
      const {readRequestFile}=await import('../requestImport')
-     const documents=await readRequestFile(file,{split,progress:setImportProgress})
-     const slips=documents.map(parseRequest)
+     const [documents,digest]=await Promise.all([
+       readRequestFile(file,{split,progress:setImportProgress}),
+       file.arrayBuffer().then(bytes=>crypto.subtle.digest('SHA-256',bytes)),
+     ])
+     const hash=Array.from(new Uint8Array(digest),value=>value.toString(16).padStart(2,'0')).join('')
+     const results=documents.map((document,index)=>({ ...parseRequest(document), index }))
        .filter(slip=>slip.header.requester||slip.header.purpose||slip.items.length)
-     const first=slips.shift()
-     if(!first) throw new Error('Data tidak dikenali. Pilih slip yang lebih jelas atau masukkan pengajuan secara manual.')
-     setImportQueue(slips)
-     openForm(null,first)
-     setToast('Periksa data dan nominal hasil impor sebelum menyimpan.')
+     if(!results.length) throw new Error('Data tidak dikenali. Pilih slip yang lebih jelas atau masukkan pengajuan secara manual.')
+     const review=[]
+     let saved=0
+     let saveError=''
+     for(const slip of results){
+       slip.key=await getImportKey(hash,split,slip.index)
+       if(!canAutoImport(slip)){
+         review.push(slip)
+         continue
+       }
+       setImportProgress('Menyimpan slip '+(slip.index+1)+' ke rekap…')
+       try{
+         await saveRequest({ ...blank(), request_time:null, ...slip.header },slip.items,slip.key)
+         saved++
+       }catch(error){
+         saveError=error.message
+         review.push(slip)
+       }
+     }
+     if(saved){
+       setQ('')
+       await load()
+     }
+     const [first,...pending]=review
+     if(first){
+       setImportQueue(pending)
+       openForm(null,first)
+     }
+     const summary=saved?saved+' slip tersedia di rekap sebagai Menunggu.':''
+     const reviewMessage=review.length?review.length+' slip perlu diperiksa.':''
+     setToast([summary,reviewMessage,saveError].filter(Boolean).join(' '))
    }catch(error){
      setToast(error.message)
    }finally{
      uploading.current=false
      setImportProgress('')
    }
+ }
+ async function saveRequest(header,lines,key,row=null){
+   const {error}=await supabase.rpc('save_purchase_request_v4',{
+     p_request_id:row?.id??null,
+     p_header:{...header,request_time:header.request_time||null},
+     p_items:lines,
+     p_operation_key:key,
+     p_expected_updated_at:row?.updated_at??null,
+   })
+   if(error) throw error
  }
  async function save(e){
    e.preventDefault()
@@ -95,14 +137,7 @@ export default function Requests({has,userId}){
    saveInProgress.current=true
    setSaving(true)
    try{
-     const {error}=await supabase.rpc('save_purchase_request_v4',{
-       p_request_id:editing?.id??null,
-       p_header:{...form,request_time:form.request_time||null},
-       p_items:lines,
-       p_operation_key:operationKey.current,
-       p_expected_updated_at:editing?.updated_at??null,
-     })
-     if(error) throw error
+     await saveRequest(form,lines,operationKey.current,editing)
      if(importQueue.length){
        const [next,...pending]=importQueue
        setImportQueue(pending)
@@ -175,16 +210,10 @@ export default function Requests({has,userId}){
      uploading.current=false
    }
  }
- async function addProgram(){
-   const name=prompt('Nama program baru')
-   if(!name) return
-   try{
-     const value=await addMasterOption('program',name,masters.program)
-     if(!value) return
-     setMasters(previous=>({...previous,program:[...new Set([...previous.program,value])]}))
-     setForm(previous=>({...previous,program:value}))
-     setToast('Program disimpan.')
-   }catch(error){setToast(error.message)}
+ async function addProgram(name){
+   const value=await addMasterOption('program',name,masters.program)
+   if(value) setMasters(previous=>({...previous,program:[...new Set([...previous.program,value])]}))
+   return value
  }
  const change=k=>e=>setForm({...form,[k]:e.target.value})
  function printSlip(){
@@ -198,7 +227,7 @@ export default function Requests({has,userId}){
  {importProgress&&<div className="info-banner" role="status">{importProgress}</div>}
  <div className="toolbar"><div className="search"><Search size={17}/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Cari no, pemohon, program..."/></div>{has('requests.create')&&<div className="actions">
    <button className="primary" disabled={!!importProgress} onClick={()=>{setImportQueue([]);openForm()}}><Plus size={17}/>Pengajuan</button>
-   <label className="upload-btn"><Upload size={16}/>Upload pengajuan<input aria-label="Upload pengajuan" type="file" accept="application/pdf,.pdf,.docx,.txt,image/jpeg,image/png,image/webp" disabled={!!importProgress} onChange={importRequest}/></label>
+   <label className="upload-btn"><Upload size={16}/>Impor ke rekap<input aria-label="Impor ke rekap" type="file" accept="application/pdf,.pdf,.docx,.txt,image/jpeg,image/png,image/webp" disabled={!!importProgress} onChange={importRequest}/></label>
  </div>}</div>
  <Card className="table-card"><div className="table-wrap"><table><thead><tr><th>No.</th><th>Tanggal</th><th>Pemohon</th><th>Program / Keperluan</th><th>Status</th><th className="right">Total</th><th></th></tr></thead><tbody>{filtered.map(r=><tr key={r.id}><td><b>{r.request_no}</b></td><td>{dateID(r.request_date)}</td><td>{r.requester}</td><td><b>{r.program||r.department||'-'}</b><small>{r.purpose}</small></td><td><span className={`badge status-${r.status}`}>{r.status==='pending'?'Menunggu':r.status==='approved'?'Disetujui':r.status==='rejected'?'Ditolak':'Selesai'}</span></td><td className="right amount">{rupiah(r.total_amount)}</td><td><div className="row-actions"><button title="Lihat slip" onClick={()=>view(r)}><Eye size={15}/></button>{canEdit(r)&&<button title="Edit pengajuan" onClick={()=>openForm(r)}><Pencil size={15}/></button>}{has('requests.delete')&&<button onClick={()=>remove(r.id)}><Trash2 size={15}/></button>}</div></td></tr>)}</tbody></table>{!filtered.length&&<Empty title="Belum ada pengajuan"/>}</div></Card>
 
@@ -210,7 +239,9 @@ export default function Requests({has,userId}){
   <label>Divisi/Departemen<input value={form.department} onChange={change('department')} placeholder="Dapur / Pendidikan / Baitulmal"/></label>
   <label>Amanah / Jabatan<input value={form.position_title} onChange={change('position_title')} placeholder="PIC Dapur"/></label>
   <label>No HP/WA<input value={form.phone} onChange={change('phone')} placeholder="08xxxxxxxxxx"/></label>
-  <label>Program internal<select value={form.program} onChange={change('program')}><option value="">-</option>{[...new Set([...(form.program?[form.program]:[]),...masters.program])].map(x=><option key={x}>{x}</option>)}</select>{has('settings.manage')&&<button type="button" onClick={addProgram}>Tambah program</button>}</label>
+  <MasterSelect label="Program internal" name="program" allowEmpty value={form.program}
+    onChange={program=>setForm(previous=>({...previous,program}))} options={masters.program}
+    onAdd={has('settings.manage')||has('requests.create')||has('requests.edit')||has('requests.approve')?addProgram:undefined}/>
   <label>Cara pembayaran<select value={form.payment_type} onChange={change('payment_type')}>{paymentTypes.map(([v,l])=><option value={v} key={v}>{l}</option>)}</select></label>
   <label className="span2">Tujuan transaksi<textarea value={form.purpose} onChange={change('purpose')} required placeholder="Belanja bahan pekanan"/></label>
   <label>No Rekening / VA<input value={form.account_number} onChange={change('account_number')}/></label>

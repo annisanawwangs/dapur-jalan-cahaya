@@ -438,6 +438,21 @@ create policy app_config_update on public.app_config for update to authenticated
 
 create policy master_options_select on public.master_options for select to authenticated using (private.is_active_member());
 create policy master_options_insert on public.master_options for insert to authenticated with check (private.has_permission('settings.manage'));
+create policy master_options_insert_from_forms on public.master_options for insert to authenticated with check (
+  active is true and sort_order = 999
+  and name = btrim(name) and char_length(name) between 1 and 100
+  and (
+    (type = 'program' and (
+      private.has_permission('requests.create') or private.has_permission('requests.edit')
+      or private.has_permission('requests.approve') or private.has_permission('finance.create')
+      or private.has_permission('finance.edit')
+    ))
+    or (type in ('expense_category', 'income_category') and (
+      private.has_permission('finance.create') or private.has_permission('finance.edit')
+    ))
+    or (type = 'material_category' and private.has_permission('stock.manage'))
+  )
+);
 create policy master_options_update on public.master_options for update to authenticated using (private.has_permission('settings.manage')) with check (private.has_permission('settings.manage'));
 create policy master_options_delete on public.master_options for delete to authenticated using (private.has_permission('settings.manage'));
 
