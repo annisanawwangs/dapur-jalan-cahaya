@@ -23,5 +23,12 @@ export function requestItems(items) {
 }
 
 export function requestTotal(items) {
-  return items.reduce((total, item) => total + Math.round(item.qty * item.unit_price * 100), 0) / 100
+  return items.reduce((total, item) => total + requestSubtotalCents(item.qty, item.unit_price), 0) / 100
+}
+
+export function requestSubtotalCents(quantity, unitPrice) {
+  const qty = Math.round(quantity * 1000)
+  const cents = Math.round(unitPrice * 100)
+  if (!Number.isSafeInteger(qty) || !Number.isSafeInteger(cents) || qty < 0 || cents < 0) return 0
+  return Number((BigInt(qty) * BigInt(cents) + 500n) / 1000n)
 }

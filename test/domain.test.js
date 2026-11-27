@@ -19,3 +19,7 @@ test('request total uses named lines and sums rounded subtotals', () => {
   assert.equal(lines.length, 2)
   assert.equal(requestTotal(lines), 1618.76)
 })
+
+test('slip currency totals round fixed-precision half cents up', () => {
+  assert.equal(requestTotal([{qty:0.15,unit_price:0.30},{qty:1.005,unit_price:1}]),1.06)
+})

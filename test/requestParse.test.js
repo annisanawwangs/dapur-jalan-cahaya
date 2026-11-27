@@ -65,3 +65,69 @@ test('two repeated date and applicant blocks split while a separate transaction 
     ['2026-11-27', '2026-11-28'])
   assert.equal(splitRequestText(blocks[0] + '\nTanggal Transaksi: 30/11/2026').length, 1)
 })
+
+const printedSlip = [
+  'Tanggal   :   28 Nov 2026',
+  'Jam   :   08:30',
+  'Jenis Transaksi   Uang Muka   ✓   Pembayaran   Penyaluran   Klaim/Reimburse',
+  'Nama SPA/Santri   :   Tim Dapur',
+  'Amanah   :',
+  'No Hp/WA   :',
+  'Tujuan Transaksi   Belanja bahan',
+  'Tujuan Transaksi   Tunai   ✓   Transfer/Top Up   Virtual Account',
+  'No Rekening/VA   :   0012-3456',
+  'Atas Nama   :   Tim Dapur',
+  'Bank   :   Bank Uji',
+  'Informasi Pengeluaran Biaya',
+  'Rincian   Nominal   Qty   Jumlah',
+  'Beras   Rp 12.500,50   2   kg   Rp 25.001',
+  'Bumbu   Rp 4.000   0,5   kg   Rp 2.000',
+  'Total Nominal   Rp 27.001',
+  'Tujuan Transaksi   :   Belanja bahan',
+  'Tanggal Transaksi   :   30 Nov 2026',
+  'SLIP PENGAJUAN',
+].join('\n')
+
+test('round-trips printed choices, the request date, and individual line items', () => {
+  const slip = parseRequest(printedSlip)
+  assert.equal(slip.header.requester, 'Tim Dapur')
+  assert.equal(slip.header.request_date, '2026-11-28')
+  assert.equal(slip.header.purpose, 'Belanja bahan')
+  assert.equal(slip.header.payment_type, 'transfer')
+  assert.equal(slip.header.transaction_type, 'payment')
+  assert.equal(slip.header.account_number, '00123456')
+  assert.equal(slip.header.phone, undefined)
+  assert.deepEqual(slip.items, [
+    { item_name:'Beras', qty:2, unit:'kg', unit_price:12500.50 },
+    { item_name:'Bumbu', qty:0.5, unit:'kg', unit_price:4000 },
+  ])
+  assert.equal(canAutoImport(slip), true)
+})
+
+test('won’t save conflicting sums, unmarked payment options or mistaken account digits automatically', () => {
+  const slip = parseRequest(printedSlip.replace('Rp 25.001','Rp 25.010')
+    .replace('Rp 27.001','Rp 27.011')
+    .replace('✓   Transfer/Top Up','Transfer/Top Up')
+    .replace('0012-3456','OO12-3456'))
+  assert.equal(canAutoImport(slip), false)
+  assert.equal(slip.header.payment_type, undefined)
+  assert.equal(slip.header.account_number, undefined)
+  assert.match(slip.issues.join(' '), /Cara pembayaran belum jelas.*Subtotal.*total rincian/i)
+  assert.equal(slip.items.length, 2)
+})
+
+test('reads wrapped labels and rejects malformed, signed, or contradictory totals', () => {
+  const prefix = 'Tanggal :\n28 Nov 2026\nPemohon :\nDapur Uji\nKeperluan: Belanja bahan\n'
+  assert.equal(canAutoImport(parseRequest(prefix + 'Total Nominal\nRp 1 500,25')), true)
+  for (const total of ['Rp -15.000', 'Rp 15.O00', 'Rp 1.2.3', '15.000\nGrand Total 16.000']) {
+    const slip = parseRequest(prefix + 'Total Nominal ' + total)
+    assert.equal(canAutoImport(slip), false, total)
+    assert.equal(slip.items.length, 0)
+  }
+})
+
+test('separates combined native exports with slip headings at the end', () => {
+  const two = splitRequestText(printedSlip+'\n'+printedSlip.replaceAll('Tim Dapur','Tim Lain'))
+  assert.deepEqual(two.map(block=>parseRequest(block).header.requester), ['Tim Dapur','Tim Lain'])
+  assert.ok(two.map(block=>parseRequest(block)).every(canAutoImport))
+})
