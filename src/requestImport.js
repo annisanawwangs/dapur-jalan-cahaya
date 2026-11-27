@@ -58,11 +58,25 @@ async function readSlip(canvas, index, recognize, progress) {
 
 const isPDF = file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
 
+export class ImportAssetsError extends Error {
+  constructor(cause) {
+    super('Komponen impor belum dapat dimuat. Muat ulang aplikasi, lalu pilih file lagi.', { cause })
+  }
+}
+
+async function loadAssets(load) {
+  try {
+    return await load()
+  } catch (error) {
+    throw new ImportAssetsError(error)
+  }
+}
+
 export async function readRequestFile(file, { split = false, progress = () => {} } = {}) {
   if (file.size > 50 * 1024 * 1024) throw new Error('Ukuran dokumen maksimal 50 MB.')
   if (/\.txt$/i.test(file.name)) return [await file.text()]
   if (/\.docx$/i.test(file.name)) {
-    const { default: mammoth } = await import('mammoth/mammoth.browser.js')
+    const { default: mammoth } = await loadAssets(() => import('mammoth/mammoth.browser.js'))
     const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })
     return [result.value]
   }
@@ -81,7 +95,7 @@ export async function readRequestFile(file, { split = false, progress = () => {}
   async function recognize(input, mode = '6', numeric = false) {
     ensureRunning()
     if (!worker) {
-      const { createWorker } = await import('tesseract.js')
+      const { createWorker } = await loadAssets(() => import('tesseract.js'))
       ensureRunning()
       const loadedWorker = await createWorker('eng', 1, {
         workerPath: '/ocr/worker.min.js',
@@ -106,10 +120,10 @@ export async function readRequestFile(file, { split = false, progress = () => {}
       progress('Membaca gambar…')
       return [await recognize(file)]
     }
-    const [pdfjs, workerAsset] = await Promise.all([
+    const [pdfjs, workerAsset] = await loadAssets(() => Promise.all([
       import('pdfjs-dist'),
       import('pdfjs-dist/build/pdf.worker.min.mjs?url'),
-    ])
+    ]))
     ensureRunning()
     pdfjs.GlobalWorkerOptions.workerSrc = workerAsset.default
     pdf = pdfjs.getDocument({ data: await file.arrayBuffer(), isEvalSupported: false })

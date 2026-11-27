@@ -62,10 +62,22 @@ export default defineConfig({
       workbox: {
         cleanupOutdatedCaches: true,
         globIgnores: ['**/ocr/**'],
-        navigateFallback: '/index.html',
+        // Use the current deployment when online and the matching app shell offline.
+        navigateFallback: null,
+        directoryIndex: null,
+        runtimeCaching: [{
+          urlPattern: ({ request, url }) => request.mode === 'navigate'
+            && url.origin === self.location.origin
+            && !/^\/(?:assets|ocr|api)(?:\/|$)/.test(url.pathname),
+          handler: 'NetworkOnly',
+          options: {
+            fetchOptions: { cache: 'no-cache' },
+            precacheFallback: { fallbackURL: '/index.html' }
+          }
+        }],
 
         globPatterns: [
-          '**/*.{js,css,html,ico,png,svg,webp,woff2}'
+          '**/*.{js,mjs,css,html,ico,png,svg,webp,woff2}'
         ]
       }
     })

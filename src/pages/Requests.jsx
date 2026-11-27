@@ -2,6 +2,7 @@ import React from 'react'
 import { Plus, Search, Eye, Pencil, Trash2, Upload, Printer, CheckCircle2, XCircle } from 'lucide-react'
 import { supabase, rupiah, dateID, getMasterOptions, groupOptions, addMasterOption } from '../lib'
 import MasterSelect from '../components/MasterSelect'
+import { ImportAssetsError, readRequestFile } from '../requestImport'
 import { Card, Empty, Modal, Toast } from '../components/UI'
 
 import { localDate, localTime, requestItems, requestTotal } from '../domain'
@@ -30,6 +31,7 @@ export default function Requests({has,userId}){
  const [saving,setSaving]=React.useState(false)
  const [importQueue,setImportQueue]=React.useState([])
  const [importProgress,setImportProgress]=React.useState('')
+ const [importAssetError,setImportAssetError]=React.useState('')
  const uploading=React.useRef(false)
  const operationKey=React.useRef(null)
  const saveInProgress=React.useRef(false)
@@ -62,11 +64,11 @@ export default function Requests({has,userId}){
    if(!file||uploading.current||saveInProgress.current) return
    if(file.size>50*1024*1024){setToast('Ukuran dokumen maksimal 50 MB.');return}
    uploading.current=true
+   setImportAssetError('')
    setImportProgress('Membuka dokumen…')
    try{
      const pdf=file.type==='application/pdf'||/\.pdf$/i.test(file.name)
      const split=pdf&&confirm('Apakah setiap halaman PDF berisi dua slip, atas dan bawah? Pilih Batal jika hanya satu slip.')
-     const {readRequestFile}=await import('../requestImport')
      const [documents,digest]=await Promise.all([
        readRequestFile(file,{split,progress:setImportProgress}),
        file.arrayBuffer().then(bytes=>crypto.subtle.digest('SHA-256',bytes)),
@@ -106,7 +108,10 @@ export default function Requests({has,userId}){
      const reviewMessage=review.length?review.length+' slip perlu diperiksa.':''
      setToast([summary,reviewMessage,saveError].filter(Boolean).join(' '))
    }catch(error){
-     setToast(error.message)
+     if(error instanceof ImportAssetsError){
+       setToast('')
+       setImportAssetError(error.message)
+     }else setToast(error.message)
    }finally{
      uploading.current=false
      setImportProgress('')
@@ -224,6 +229,10 @@ export default function Requests({has,userId}){
  }
  return <>
  <Toast message={toast}/>
+ {importAssetError&&<div className="info-banner" role="alert">
+   <span>{importAssetError}</span>
+   <button type="button" onClick={()=>window.location.reload()}>Muat ulang</button>
+ </div>}
  {importProgress&&<div className="info-banner" role="status">{importProgress}</div>}
  <div className="toolbar"><div className="search"><Search size={17}/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Cari no, pemohon, program..."/></div>{has('requests.create')&&<div className="actions">
    <button className="primary" disabled={!!importProgress} onClick={()=>{setImportQueue([]);openForm()}}><Plus size={17}/>Pengajuan</button>
