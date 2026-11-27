@@ -78,7 +78,7 @@ Dari menu **Pengaturan**, Admin dapat mengelola:
 - Satuan bahan/barang.
 - Hak akses tiap role non-Admin.
 
-Perubahan data master otomatis dipakai pada form Keuangan, Stok, dan Pengajuan. Impor slip membaca dokumen di browser dan membuka formulir untuk diperiksa sebelum disimpan.
+Perubahan data master otomatis dipakai pada form Keuangan, Stok, dan Pengajuan. Impor slip membaca dokumen di browser. Jika tanggal, pemohon, tujuan, dan nominal terbaca, slip masuk ke rekap pengajuan dengan status Menunggu. Slip yang belum lengkap dibuka untuk diperiksa. Pencairan tetap dicatat setelah pengajuan selesai.
 
 ## Keamanan
 

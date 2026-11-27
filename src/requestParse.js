@@ -58,10 +58,28 @@ export function parseRequest(text) {
 
   const nominal = text.match(/^\s*Total(?:\s+(?:Nominal|Pengajuan|Biaya))?\s*[:：]?\s*(?:Rp\.?\s*)?([\d.,]+)/im)
   const value = nominal?.[1] ?? ''
-  const normalized = /,\d{1,2}$/.test(value) ? value.replaceAll('.', '').replace(',', '.') : value.replace(/[.,]/g, '')
+  let normalized = ''
+  if (/^\d+(?:[.,]\d{1,2})?$/.test(value)) normalized = value.replace(',', '.')
+  else if (/^\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?$/.test(value)) normalized = value.replaceAll('.', '').replace(',', '.')
+  else if (/^\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?$/.test(value)) normalized = value.replaceAll(',', '')
   const amount = Number(normalized)
   const items = amount > 0 && Number.isFinite(amount)
     ? [{ item_name: header.purpose || 'Total pengajuan', qty: 1, unit: 'pcs', unit_price: amount }]
     : []
   return { header, items }
+}
+
+export function canAutoImport({ header, items }) {
+  return Boolean(header.request_date && header.requester && header.purpose
+    && items.length && items.every(item => item.unit_price > 0 && item.unit_price < 1e13))
+}
+
+export async function getImportKey(fileDigest, split, index) {
+  // Stable across retries and renaming a file. The database scopes the key to the current user.
+  const id = new Uint8Array(await crypto.subtle.digest('SHA-256',
+    new TextEncoder().encode(fileDigest + ':' + (split ? 'split' : 'single') + ':' + index))).slice(0, 16)
+  id[6] = (id[6] & 0x0f) | 0x80
+  id[8] = (id[8] & 0x3f) | 0x80
+  const hex = Array.from(id, byte => byte.toString(16).padStart(2, '0')).join('')
+  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-')
 }
