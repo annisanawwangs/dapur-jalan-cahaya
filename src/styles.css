@@ -2320,3 +2320,35 @@ td small {
     font-weight: 600 !important;
   }
 }
+
+.invoice-line {
+  display: grid;
+  grid-template-columns: minmax(7rem, 2fr) minmax(3.5rem, .55fr) minmax(4rem, .6fr) minmax(6rem, 1fr) minmax(6rem, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line, #e2eeea);
+}
+.invoice-line input { min-width: 0; }
+.invoice-subtotal { display: grid; gap: 6px; padding-bottom: 8px; }
+.invoice-subtotal span { font-size: 11px; color: #536966; }
+.invoice-detail { padding: 20px; }
+.invoice-name {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--teal);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+.invoice-print-items { display: none; }
+@media (max-width: 620px) {
+  .invoice-line { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media print {
+  body.finance-print .invoice-print-items { display: block; }
+  body.finance-print .invoice-name { display: none; }
+}

@@ -202,6 +202,65 @@ create index if not exists transactions_date_idx on public.transactions(transact
 create index if not exists transactions_type_idx on public.transactions(type);
 alter table public.transactions add column if not exists item_name text;
 
+alter table public.transactions add column if not exists invoice_items jsonb;
+
+create or replace function private.normalize_expense_invoice()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  line jsonb;
+  name text;
+  unit text;
+  qty numeric;
+  price numeric;
+  total numeric := 0;
+  normalized jsonb := '[]'::jsonb;
+  names text[] := '{}';
+begin
+  if new.invoice_items is null then return new; end if;
+  if new.type <> 'expense' or jsonb_typeof(new.invoice_items) is distinct from 'array' then
+    raise exception 'Rincian barang hanya berlaku untuk pengeluaran.';
+  end if;
+  if jsonb_array_length(new.invoice_items) not between 1 and 200 then
+    raise exception 'Masukkan 1 sampai 200 barang.';
+  end if;
+  for line in select value from jsonb_array_elements(new.invoice_items) loop
+    if jsonb_typeof(line->'item_name') is distinct from 'string'
+       or jsonb_typeof(line->'unit') is distinct from 'string'
+       or jsonb_typeof(line->'qty') is distinct from 'number'
+       or jsonb_typeof(line->'unit_price') is distinct from 'number' then
+      raise exception 'Nama barang, jumlah, satuan, dan harga harus valid.';
+    end if;
+    name := btrim(line->>'item_name');
+    unit := btrim(line->>'unit');
+    qty := (line->>'qty')::numeric;
+    price := (line->>'unit_price')::numeric;
+    if name = '' or unit = '' or qty <= 0 or qty >= 1e12 or qty <> round(qty,3)
+       or price < 0 or price >= 1e13 or price <> round(price,2) then
+      raise exception 'Periksa nama barang, satuan, jumlah, dan harga satuan.';
+    end if;
+    total := total + round(qty * price,2);
+    names := array_append(names,name);
+    normalized := normalized || jsonb_build_array(jsonb_build_object(
+      'item_name',name,'unit',unit,'qty',qty,'unit_price',price
+    ));
+  end loop;
+  if total >= 1e13 then raise exception 'Total faktur melebihi batas nominal.'; end if;
+  new.invoice_items := normalized;
+  new.item_name := array_to_string(names, ', ');
+  new.amount := total;
+  return new;
+end;
+$$;
+
+revoke all on function private.normalize_expense_invoice() from public, anon, authenticated;
+drop trigger if exists transactions_normalize_expense_invoice on public.transactions;
+create trigger transactions_normalize_expense_invoice
+before insert or update of invoice_items, amount, item_name, type on public.transactions
+for each row execute function private.normalize_expense_invoice();
+
 -- --------------------------- STOK ------------------------------
 create table if not exists public.materials (
   id uuid primary key default gen_random_uuid(),
