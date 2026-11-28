@@ -200,6 +200,7 @@ create table if not exists public.transactions (
 );
 create index if not exists transactions_date_idx on public.transactions(transaction_date desc);
 create index if not exists transactions_type_idx on public.transactions(type);
+alter table public.transactions add column if not exists item_name text;
 
 -- --------------------------- STOK ------------------------------
 create table if not exists public.materials (
